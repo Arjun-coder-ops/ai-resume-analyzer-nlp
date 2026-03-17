@@ -1,0 +1,153 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #0a0a14;
+    --bg-secondary: #0f0f1e;
+    --bg-card: #141428;
+    --bg-card-hover: #1a1a33;
+    --border: rgba(255,255,255,0.06);
+    --border-hover: rgba(160,240,0,0.3);
+    --text-primary: #f0f0f5;
+    --text-secondary: #9494ba;
+    --accent: #a0f000;
+    --accent-dim: rgba(160,240,0,0.15);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-primary); }
+  ::-webkit-scrollbar-thumb { background: rgba(160,240,0,0.3); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(160,240,0,0.5); }
+
+  ::selection { background: rgba(160,240,0,0.25); color: #fff; }
+}
+
+@layer components {
+  /* ── Glassmorphism card ─────────────────────────────────── */
+  .glass-card {
+    background: rgba(20, 20, 40, 0.7);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+  }
+
+  .glass-card:hover {
+    border-color: rgba(160,240,0,0.15);
+  }
+
+  /* ── Volt button ────────────────────────────────────────── */
+  .btn-volt {
+    @apply relative overflow-hidden font-display font-semibold text-ink-900 bg-volt-400 rounded-xl px-6 py-3 transition-all duration-200;
+    letter-spacing: 0.01em;
+  }
+  .btn-volt:hover {
+    @apply bg-volt-300 shadow-volt-sm;
+    transform: translateY(-1px);
+  }
+  .btn-volt:active { transform: translateY(0); }
+  .btn-volt:disabled {
+    @apply opacity-50 cursor-not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  /* ── Ghost button ───────────────────────────────────────── */
+  .btn-ghost {
+    @apply font-display font-medium text-ink-300 border border-ink-700 rounded-xl px-5 py-2.5 transition-all duration-200;
+  }
+  .btn-ghost:hover {
+    @apply border-ink-500 text-ink-100 bg-ink-800;
+  }
+
+  /* ── Input fields ───────────────────────────────────────── */
+  .input-field {
+    @apply w-full bg-ink-800 border border-ink-700 rounded-xl px-4 py-3 text-ink-100 placeholder-ink-400 transition-all duration-200 outline-none;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .input-field:focus {
+    @apply border-volt-400 bg-ink-700;
+    box-shadow: 0 0 0 3px rgba(160,240,0,0.1);
+  }
+
+  /* ── Section label ──────────────────────────────────────── */
+  .section-label {
+    @apply text-xs font-mono font-medium tracking-widest text-volt-400 uppercase;
+  }
+
+  /* ── Shimmer loading skeleton ───────────────────────────── */
+  .skeleton {
+    background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-card-hover) 50%, var(--bg-card) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.8s infinite;
+    border-radius: 0.5rem;
+  }
+
+  /* ── Skill badge ────────────────────────────────────────── */
+  .badge-matched {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-medium;
+    background: rgba(160,240,0,0.12);
+    color: #c2ff3d;
+    border: 1px solid rgba(160,240,0,0.25);
+  }
+
+  .badge-missing {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-medium;
+    background: rgba(255,62,108,0.12);
+    color: #ff7096;
+    border: 1px solid rgba(255,62,108,0.25);
+  }
+
+  /* ── Noise overlay ──────────────────────────────────────── */
+  .noise-overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  }
+}
+
+/* ── Animated gradient mesh background ─────────────────────── */
+.bg-mesh {
+  background:
+    radial-gradient(ellipse 80% 60% at 20% -10%, rgba(160,240,0,0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 110%, rgba(62,62,122,0.15) 0%, transparent 60%),
+    #0a0a14;
+}
+
+/* ── Score ring animation ────────────────────────────────── */
+@keyframes ring-fill {
+  from { stroke-dashoffset: 283; }
+  to   { stroke-dashoffset: var(--target-offset); }
+}
+
+.score-ring-circle {
+  animation: ring-fill 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation-delay: 0.3s;
+  stroke-dashoffset: 283;
+}
+
+/* ── Stagger animation helpers ───────────────────────────── */
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s;  }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s;  }
+.stagger-5 { animation-delay: 0.25s; }
