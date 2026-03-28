@@ -1,236 +1,178 @@
-# 🧠 Smart Resume Analyzer & ATS Optimizer
+<div align="center">
+  <img src="https://via.placeholder.com/800x200/0f172a/38bdf8?text=Smart+Resume+Analyzer" alt="Smart Resume Analyzer Banner" />
+  
+  <br />
+  <br />
 
-A full-stack AI-powered web app that analyzes your resume against job descriptions, computes an ATS compatibility score, and surfaces matched/missing skills with improvement suggestions.
+  <h1>🧠 Smart Resume Analyzer & ATS Optimizer</h1>
+
+  <p>
+    <strong>A full-stack AI-powered web platform that evaluates resumes against job descriptions using Large Language Models (LLMs) and Vector Embeddings.</strong>
+  </p>
+
+  <p>
+    <a href="#-ai-features"><strong>Explore Features</strong></a> ·
+    <a href="#-setup-instructions"><strong>Installation Guide</strong></a> ·
+    <a href="#-async-architecture"><strong>Architecture</strong></a>
+  </p>
+
+  <br />
+
+  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" />
+  <img src="https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" />
+  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/Flask-000000?style=for-the-badge&logo=flask&logoColor=white" />
+  <br />
+  <img src="https://img.shields.io/badge/Gemini_API-886FBF?style=for-the-badge&logo=googlebard&logoColor=white" />
+  <img src="https://img.shields.io/badge/HuggingFace-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black" />
+  <img src="https://img.shields.io/badge/MongoDB-4EA94B?style=for-the-badge&logo=mongodb&logoColor=white" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" />
+</div>
+
+---
+
+## ✨ AI Features
+
+Unlike basic systems that rely on simple keyword regex matching, this application uses a state-of-the-art AI architecture:
+
+- 🧮 **Semantic Similarity Scoring:** Uses `sentence-transformers/all-MiniLM-L6-v2` to compute the Cosine Similarity between the Resume and Job Description. It understands *context*, not just exact words.
+- 🧠 **LLM Data Extraction:** Integrates with the **Google Gemini API** (`gemini-2.5-flash`) to intelligently read unstructured PDFs and extract formatted JSON data (Experience, Education, Projects).
+- 🔍 **Dynamic Gap Analysis:** The LLM cross-references the job description with the resume to identify contextually missing skills and provide actionable ATS optimization tips.
+- ⚡ **Asynchronous Background Processing:** Heavy AI tasks are offloaded to a non-blocking Python worker thread that communicates with the Node.js backend via Webhooks, keeping the frontend ultra-fast.
+
+---
+
+## 📸 Screenshots
+
+*(Add your actual screenshots to the `docs/` folder and update these links!)*
+
+| Dashboard Overview | AI Extracted Results |
+|:---:|:---:|
+| <img src="https://via.placeholder.com/400x250/1e293b/a78bfa?text=Dashboard+Screenshot" alt="Dashboard" /> | <img src="https://via.placeholder.com/400x250/1e293b/a78bfa?text=Results+Screenshot" alt="Results" /> |
 
 ---
 
 ## 📁 Project Structure
 
-```
+```text
 smart-resume-analyzer/
 ├── backend/                  # Node.js + Express API
-│   ├── config/db.js          # MongoDB connection
-│   ├── controllers/          # Business logic
-│   │   ├── authController.js
-│   │   ├── analyzeController.js
-│   │   └── historyController.js
-│   ├── middleware/           # JWT auth + Multer upload
+│   ├── controllers/          # Business & Webhook logic
 │   ├── models/               # Mongoose schemas (User, Analysis)
-│   ├── routes/               # Express routers
-│   ├── uploads/              # Temp PDF storage (auto-created)
+│   ├── routes/               # Express routers (/api/analyze)
 │   ├── .env                  # Environment variables
 │   └── server.js             # Entry point
 │
-├── nlp-service/              # Python Flask NLP microservice
-│   ├── app.py                # Flask API with /analyze endpoint
-│   ├── skills_db.py          # 200+ skills keyword database
-│   └── requirements.txt
+├── nlp-service/              # Python Flask AI service
+│   ├── app.py                # Async LLM & Embedding worker
+│   ├── .env                  # Gemini API Key configuration
+│   └── requirements.txt      # PyTorch, SentenceTransformers, GenAI
 │
 └── frontend/                 # React + Vite + Tailwind UI
-    ├── src/
-    │   ├── components/       # Reusable UI components
-    │   ├── context/          # Auth context (global state)
-    │   ├── pages/            # AuthPage, Dashboard
-    │   └── utils/api.js      # Axios instance
-    └── index.html
+    └── src/
+        ├── components/       # ResultsPanel, ScoreRing, etc.
+        ├── pages/            # Dashboard view with automatic Polling
+        └── utils/api.js      # Axios instance
 ```
-
----
-
-## ⚙️ Prerequisites
-
-| Tool        | Version   | Install                        |
-|-------------|-----------|--------------------------------|
-| Node.js     | v18+      | https://nodejs.org             |
-| npm         | v9+       | Included with Node             |
-| Python      | 3.9+      | https://python.org             |
-| MongoDB     | 6+        | https://mongodb.com/try/download/community |
 
 ---
 
 ## 🚀 Setup Instructions
 
-### Step 1 — Clone / extract the project
+### 1. NLP Service (AI Microservice)
 
-```bash
-cd smart-resume-analyzer
-```
-
----
-
-### Step 2 — Backend Setup
-
-```bash
-cd backend
-npm install
-```
-
-Edit `.env` if needed (MongoDB URI, JWT secret, ports).
-
-Start the server:
-```bash
-npm run dev          # Development (nodemon auto-reload)
-# or
-npm start            # Production
-```
-
-✅ Backend runs on **http://localhost:5000**
-
----
-
-### Step 3 — NLP Service Setup
+You will need a free Gemini API Key from Google AI Studio.
 
 ```bash
 cd nlp-service
 
-# Create and activate virtual environment (recommended)
+# Create and activate a virtual environment
 python -m venv venv
-source venv/bin/activate          # Linux/macOS
-# venv\Scripts\activate           # Windows
+source venv/bin/activate       # macOS/Linux
+# .\venv\Scripts\activate      # Windows
 
-# Install dependencies
+# Install AI dependencies (includes PyTorch, which may take a minute)
 pip install -r requirements.txt
-
-# Download spaCy language model
-python -m spacy download en_core_web_sm
-
-# Start the Flask service
-python app.py
 ```
 
-✅ NLP Service runs on **http://localhost:5001**
+**Configure API Key:**
+Open `nlp-service/.env` and add your key:
+```env
+FLASK_ENV=development
+PORT=5001
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
+```
+
+Start the service:
+```bash
+python app.py
+```
+*(Note: On initial boot, it will download the ~90MB embeddings model from Hugging Face).*
 
 ---
 
-### Step 4 — Frontend Setup
+### 2. Backend Setup
+
+```bash
+cd backend
+npm install
+npm run dev
+```
+Runs on `http://localhost:5000`. Requires MongoDB to be running locally on port `27017`.
+
+---
+
+### 3. Frontend Setup
 
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-
-✅ Frontend runs on **http://localhost:5173**
-
----
-
-## 🔗 API Reference
-
-### Auth
-| Method | Route                 | Access  | Body                          |
-|--------|-----------------------|---------|-------------------------------|
-| POST   | /api/auth/register   | Public  | `{ name, email, password }`   |
-| POST   | /api/auth/login      | Public  | `{ email, password }`         |
-| GET    | /api/auth/me         | Private | JWT in header                 |
-
-### Analysis
-| Method | Route         | Access  | Body                                         |
-|--------|---------------|---------|----------------------------------------------|
-| POST   | /api/analyze  | Private | `FormData: resume (PDF) + jobDescription`    |
-
-### History
-| Method | Route             | Access  | Description          |
-|--------|-------------------|---------|----------------------|
-| GET    | /api/history      | Private | Get past analyses    |
-| GET    | /api/history/:id  | Private | Single analysis      |
-| DELETE | /api/history/:id  | Private | Delete analysis      |
+Runs on `http://localhost:5173`.
 
 ---
 
-## 🔄 API Flow
+## 🔄 Async Architecture Flow
 
+To prevent the web server from hanging while the AI processes heavy PDFs, this project utilizes a modern Webhook architecture:
+
+```mermaid
+sequenceDiagram
+    participant React as Frontend (React)
+    participant Node as Backend (Node.js)
+    participant DB as MongoDB
+    participant Python as AI Service (Flask)
+
+    React->>Node: POST /api/analyze (PDF + JD)
+    Node->>DB: Create Analysis Record (status: "processing")
+    Node->>Python: POST /analyze/async (PDF + JD + webhook_url)
+    Python-->>Node: 202 Accepted (Processing started in background thread)
+    Node-->>React: Return Analysis ID immediately
+    
+    loop Every 3 seconds
+        React->>Node: GET /api/history/:id
+        Node-->>React: status: "processing"
+    end
+    
+    Note over Python: 1. Extract text via PyMuPDF<br/>2. Embed via SentenceTransformers<br/>3. Gemini LLM Extraction
+    
+    Python->>Node: POST /api/analyze/webhook/:id (Final Results payload)
+    Node->>DB: Update Record (status: "completed")
+    Node-->>Python: 200 OK
+    
+    React->>Node: GET /api/history/:id
+    Node-->>React: status: "completed" + Results Data
+    Note over React: UI slides down with AI Results!
 ```
-Browser (React)
-    │
-    ├─ POST /api/analyze (FormData: PDF + JD)
-    │
-Node.js Backend (port 5000)
-    │
-    ├─ Validates JWT
-    ├─ Saves to MongoDB (status: "processing")
-    ├─ Forwards PDF + JD to Python NLP service
-    │
-Python NLP Service (port 5001)
-    │
-    ├─ Extracts text from PDF (PyMuPDF)
-    ├─ Extracts skills (spaCy + keyword matching)
-    ├─ Compares resume vs JD skills
-    ├─ Calculates score = matched/total_jd * 100
-    └─ Returns { score, matched_skills, missing_skills, suggestions }
-    │
-Node.js Backend
-    ├─ Updates MongoDB record (status: "completed")
-    └─ Returns full result to frontend
-    │
-Browser → Displays animated results
-```
-
----
-
-## 🔧 Environment Variables
-
-### backend/.env
-```env
-PORT=5000
-NODE_ENV=development
-MONGO_URI=mongodb://localhost:27017/smart_resume_analyzer
-JWT_SECRET=your_super_secret_key_change_this
-JWT_EXPIRE=7d
-NLP_SERVICE_URL=http://localhost:5001
-MAX_FILE_SIZE=10485760
-UPLOAD_DIR=./uploads
-```
-
-### nlp-service/.env
-```env
-FLASK_ENV=development
-PORT=5001
-```
-
----
-
-## 🧪 Testing the API with curl
-
-```bash
-# 1. Register
-curl -X POST http://localhost:5000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Alex","email":"alex@test.com","password":"test123"}'
-
-# 2. Login → save the token
-curl -X POST http://localhost:5000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"alex@test.com","password":"test123"}'
-
-# 3. Analyze (replace TOKEN and path to PDF)
-curl -X POST http://localhost:5000/api/analyze \
-  -H "Authorization: Bearer TOKEN" \
-  -F "resume=@/path/to/resume.pdf" \
-  -F "jobDescription=We are looking for a React developer with Node.js, MongoDB, Docker, AWS and TypeScript experience..."
-```
-
----
-
-## 🎨 UI Features
-
-- **Dark theme** with volt-green accent palette
-- **Syne + DM Sans** typography pairing
-- **Glassmorphism** cards with subtle borders
-- **Animated SVG score ring** with count-up
-- **Drag & drop** PDF upload zone
-- **Green / red skill badges** with staggered animations
-- **Step-by-step loading animation** during analysis
-- **Analysis history** with one-click restore
-- Fully **responsive** (mobile → desktop)
 
 ---
 
 ## 🛠️ Common Issues
 
-| Issue | Fix |
-|-------|-----|
-| `ECONNREFUSED 5001` | NLP service not running. Start `python app.py` |
-| `MongoServerError` | MongoDB not running. Start `mongod` |
-| `spacy model not found` | Run `python -m spacy download en_core_web_sm` |
-| CORS error | Ensure `CLIENT_URL` in backend `.env` matches frontend port |
-| PDF shows score 0 | PDF may be image-based. Use a text-searchable PDF |
+| Issue | Solution |
+|-------|----------|
+| `ModuleNotFoundError` during `python app.py` | Ensure your virtual environment is activated BEFORE running `pip install` and `python app.py`. |
+| `AI Analysis service is offline` | The main Node server is trying to hit Python on port 5001, but it's not running. Start `python app.py`. |
+| `LLM Extraction Failed` | You forgot to replace `YOUR_GEMINI_API_KEY_HERE` in `nlp-service/.env`. |
+| `MongoServerError` | MongoDB is not running on your machine. Start the `mongod` service. |
