@@ -109,6 +109,38 @@ export default function ResultsPanel({ data }) {
         </div>
       </div>
 
+      {/* ── Extracted AI Data ─────────────────────────────────── */}
+      <div className="glass-card p-5">
+        <h4 className="font-display font-600 text-ink-100 text-sm mb-4">AI Extracted Overview</h4>
+        <div className="space-y-4">
+          <div>
+            <p className="text-volt-400 text-xs mb-1 font-mono uppercase">Experience</p>
+            <p className="text-ink-300 text-sm leading-relaxed">{data.experience || 'No experience extracted.'}</p>
+          </div>
+          <div className="h-px bg-ink-800/60 w-full" />
+          <div>
+            <p className="text-volt-400 text-xs mb-1 font-mono uppercase">Education</p>
+            <p className="text-ink-300 text-sm leading-relaxed">{data.education || 'No education extracted.'}</p>
+          </div>
+          <div className="h-px bg-ink-800/60 w-full" />
+          <div>
+            <p className="text-volt-400 text-xs mb-2 font-mono uppercase">Projects</p>
+            {data.projects && data.projects.length > 0 ? (
+              <ul className="space-y-1 text-ink-300 text-sm leading-relaxed">
+                {data.projects.map((proj, i) => (
+                  <li key={i} className="flex gap-2 items-start">
+                    <span className="text-volt-400 font-mono mt-0.5">→</span>
+                    {proj}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-ink-300 text-sm leading-relaxed">No projects extracted.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* ── Suggestions ─────────────────────────────────── */}
       <div className="glass-card p-5">
         <div className="flex items-center gap-2 mb-4">

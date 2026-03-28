@@ -45,6 +45,19 @@ const analysisSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    // Extracted by LLM
+    experience: {
+      type: String,
+      default: '',
+    },
+    education: {
+      type: String,
+      default: '',
+    },
+    projects: {
+      type: [String],
+      default: [],
+    },
     // Track processing status
     status: {
       type: String,

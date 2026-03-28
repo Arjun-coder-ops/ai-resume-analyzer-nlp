@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { analyzeResume } = require('../controllers/analyzeController');
+const { analyzeResume, handleWebhook } = require('../controllers/analyzeController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
 
@@ -15,5 +15,9 @@ router.post(
   upload.single('resume'), // 'resume' is the field name
   analyzeResume
 );
+
+// POST /api/analyze/webhook/:id
+// Public (Internal Webhook): Receives data from Python service
+router.post('/webhook/:id', handleWebhook);
 
 module.exports = router;

@@ -66,15 +66,40 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
 
-      setResult(data.data)
-      // Reload history to include new entry
-      loadHistory()
-      // Scroll to results
-      setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+      if (data.data && data.data.status === 'processing') {
+        pollAnalysis(data.data.analysisId)
+      } else {
+        setResult(data.data)
+        setAnalyzing(false)
+        loadHistory()
+        setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+      }
     } catch (err) {
       const msg = err.response?.data?.message || 'Analysis failed. Please check that your NLP service is running.'
       setError(msg)
-    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  const pollAnalysis = async (id) => {
+    try {
+      const { data } = await api.get(`/history/${id}`)
+      const analysis = data.data
+      
+      if (analysis.status === 'completed') {
+        setResult(analysis)
+        setAnalyzing(false)
+        loadHistory()
+        setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+      } else if (analysis.status === 'failed') {
+        setError(analysis.errorMessage || 'AI processing failed.')
+        setAnalyzing(false)
+      } else {
+        // Still processing or pending, queue next check
+        setTimeout(() => pollAnalysis(id), 3000)
+      }
+    } catch (err) {
+      setError('Lost connection while waiting for AI analysis.')
       setAnalyzing(false)
     }
   }

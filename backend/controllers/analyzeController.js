@@ -53,66 +53,90 @@ const analyzeResume = async (req, res) => {
       contentType: 'application/pdf',
     });
     formData.append('job_description', jobDescription.trim());
+    formData.append('analysis_id', analysis._id.toString());
+    
+    // Webhook URL where Python will POST the results back
+    const webhookUrl = `${process.env.APP_URL || 'http://localhost:5000'}/api/analyze/webhook/${analysis._id}`;
+    formData.append('webhook_url', webhookUrl);
 
-    const nlpResponse = await axios.post(
-      `${process.env.NLP_SERVICE_URL || 'http://localhost:5001'}/analyze`,
+    // Fire the request to the Python async endpoint, but DON'T await it
+    axios.post(
+      `${process.env.NLP_SERVICE_URL || 'http://localhost:5001'}/analyze/async`,
       formData,
-      {
-        headers: { ...formData.getHeaders() },
-        timeout: 30000, // 30s timeout
-      }
-    );
+      { headers: { ...formData.getHeaders() } }
+    ).catch(async (nlpError) => {
+      console.error('Failed to trigger NLP service:', nlpError.message);
+      // If the initial connection fails completely
+      analysis.status = 'failed';
+      analysis.errorMessage = 'AI Analysis service is currently offline.';
+      await analysis.save();
+    });
 
-    const { score, matched_skills, missing_skills, suggestions } = nlpResponse.data;
-
-    // ── Update analysis record with NLP results ──────────
-    analysis.score = Math.round(score);
-    analysis.matchedSkills = matched_skills || [];
-    analysis.missingSkills = missing_skills || [];
-    analysis.suggestions = suggestions || [];
-    analysis.status = 'completed';
-    await analysis.save();
-
-    // ── Respond to frontend ───────────────────────────────
+    // ── Respond to frontend IMMEDIATELY ───────────────────────────────
     res.json({
       success: true,
-      message: 'Analysis completed successfully.',
+      message: 'Analysis started. Please wait for the AI to process your resume.',
       data: {
         analysisId: analysis._id,
-        score: analysis.score,
-        matchedSkills: analysis.matchedSkills,
-        missingSkills: analysis.missingSkills,
-        suggestions: analysis.suggestions,
+        status: 'processing',
         jobTitle: analysis.jobTitle,
         resumeName: analysis.resumeOriginalName,
         createdAt: analysis.createdAt,
       },
     });
-  } catch (nlpError) {
-    console.error('NLP service error:', nlpError.message);
-
-    // Mark analysis as failed
-    analysis.status = 'failed';
-    analysis.errorMessage = nlpError.message;
-    await analysis.save();
-
-    // Determine user-friendly error message
-    let message = 'NLP service is unavailable. Please try again later.';
-    if (nlpError.code === 'ECONNREFUSED') {
-      message = 'NLP analysis service is offline. Please contact support.';
-    } else if (nlpError.response?.data?.error) {
-      message = nlpError.response.data.error;
-    }
-
-    res.status(503).json({ success: false, message });
+  } catch (error) {
+    console.error('Analysis initiation error:', error);
+    res.status(500).json({ success: false, message: 'Failed to initiate analysis.' });
   } finally {
     // Clean up the uploaded file after processing
     if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlink(req.file.path, (err) => {
-        if (err) console.error('File cleanup error:', err);
-      });
+      setTimeout(() => {
+        fs.unlink(req.file.path, (err) => {
+          if (err) console.error('File cleanup error:', err);
+        });
+      }, 5000); // Wait 5s before deleting so Python has time to read it in transmission
     }
   }
 };
 
-module.exports = { analyzeResume };
+// ──────────────────────────────────────────────────────────────
+// @route   POST /api/analyze/webhook/:id
+// @desc    Receive completed analysis from Python NLP service
+// @access  Public (Internal Webhook)
+// ──────────────────────────────────────────────────────────────
+const handleWebhook = async (req, res) => {
+  const { id } = req.params;
+  const { 
+    status, score, matched_skills, missing_skills, suggestions, 
+    experience, education, projects, error 
+  } = req.body;
+
+  try {
+    const analysis = await Analysis.findById(id);
+    if (!analysis) {
+      return res.status(404).json({ success: false, message: 'Analysis not found' });
+    }
+
+    if (status === 'failed' || error) {
+      analysis.status = 'failed';
+      analysis.errorMessage = error || 'AI processing failed.';
+    } else {
+      analysis.score = Math.round(score || 0);
+      analysis.matchedSkills = matched_skills || [];
+      analysis.missingSkills = missing_skills || [];
+      analysis.suggestions = suggestions || [];
+      analysis.experience = experience || '';
+      analysis.education = education || '';
+      analysis.projects = projects || [];
+      analysis.status = 'completed';
+    }
+
+    await analysis.save();
+    return res.json({ success: true, message: 'Webhook received and saved' });
+  } catch (err) {
+    console.error('Webhook error:', err.message);
+    return res.status(500).json({ success: false, message: 'Server Error' });
+  }
+};
+
+module.exports = { analyzeResume, handleWebhook };
