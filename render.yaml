@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: resume-analyzer-backend
+    env: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: NLP_SERVICE_URL
+        sync: false
+
+  - type: web
+    name: resume-analyzer-nlp
+    env: python
+    rootDir: nlp-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 120 app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PORT
+        value: 10001
+      - key: GEMINI_API_KEY
+        sync: false
