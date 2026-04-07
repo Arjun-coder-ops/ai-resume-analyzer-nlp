@@ -28,6 +28,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Serve uploaded files statically (for debugging only)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+const { errorMiddleware, notFound } = require('./middleware/errorMiddleware');
+
 // ── Routes ──────────────────────────────────────────────────
 app.use('/api/auth',    require('./routes/authRoutes'));
 app.use('/api/analyze', require('./routes/analyzeRoutes'));
@@ -38,26 +40,19 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Smart Resume Analyzer API is running', timestamp: new Date().toISOString() });
 });
 
-// ── Global error handler ────────────────────────────────────
-app.use((err, req, res, next) => {
-  console.error('Global Error:', err.stack);
-  res.status(err.status || 500).json({
-    success: false,
-    message: err.message || 'Internal Server Error',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
-  });
-});
-
-// ── 404 handler ─────────────────────────────────────────────
-app.use((req, res) => {
-  res.status(404).json({ success: false, message: `Route ${req.originalUrl} not found` });
-});
+// ── Error Handlers (Structured) ─────────────────────────────
+app.use(notFound);      // 404 middleware
+app.use(errorMiddleware); // Global error middleware
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Server running on port ${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV}`);
-  console.log(`🔗 Health: http://0.0.0.0:${PORT}/api/health\n`);
-});
+
+// Export for testing, but only listen if not in a test environment
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n🚀 Server running on port ${PORT}`);
+    console.log(`📊 Environment: ${process.env.NODE_ENV}`);
+    console.log(`🔗 Health: http://0.0.0.0:${PORT}/api/health\n`);
+  });
+}
 
 module.exports = app;
