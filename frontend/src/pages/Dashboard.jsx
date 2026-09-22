@@ -81,7 +81,7 @@ export default function Dashboard() {
     }
   }
 
-  const pollAnalysis = async (id) => {
+  const pollAnalysis = async (id, attempt = 1) => {
     try {
       const { data } = await api.get(`/history/${id}`)
       const analysis = data.data
@@ -95,8 +95,16 @@ export default function Dashboard() {
         setError(analysis.errorMessage || 'AI processing failed.')
         setAnalyzing(false)
       } else {
-        // Still processing or pending, queue next check
-        setTimeout(() => pollAnalysis(id), 3000)
+        // Still processing or queued
+        const MAX_POLLS = 100; // ~5 mins at 3s intervals
+        if (attempt >= MAX_POLLS) {
+          setError('Analysis is taking longer than expected. Please check your history later.')
+          setAnalyzing(false)
+          loadHistory()
+        } else {
+          // Queue next check
+          setTimeout(() => pollAnalysis(id, attempt + 1), 3000)
+        }
       }
     } catch (err) {
       setError('Lost connection while waiting for AI analysis.')

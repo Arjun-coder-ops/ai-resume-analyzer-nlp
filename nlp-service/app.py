@@ -39,14 +39,14 @@ def call_llm(prompt: str) -> str:
     """Wrapper to call Gemini API."""
     if not API_KEY or API_KEY == "YOUR_GEMINI_API_KEY_HERE":
         raise ValueError("GEMINI_API_KEY is not configured.")
-    
+
     model = genai.GenerativeModel('gemini-2.5-flash')
     response = model.generate_content(prompt)
     return response.text
 
 def extract_resume_data(text: str) -> dict:
     prompt = f"""
-You are an expert ATS (Applicant Tracking System). Extract the following information from the resume text provided below. 
+You are an expert ATS (Applicant Tracking System). Extract the following information from the resume text provided below.
 Return ONLY a valid JSON object with the exact following schema, nothing else:
 {{
   "skills": ["skill1", "skill2"],
@@ -95,9 +95,9 @@ Resume Context:
 # ────────────────────────────────────────────────────────────
 # Async Worker
 # ────────────────────────────────────────────────────────────
-def process_analysis(pdf_bytes: bytes, job_description: str, webhook_url: str):
+def process_analysis(pdf_bytes: bytes, job_description: str, webhook_url: str, internal_token: str = ""):
     print(f"🔄 Starting background analysis job (Webhook: {webhook_url})")
-    
+
     payload = {
         "status": "failed",
         "error": "Unknown error"
@@ -109,29 +109,29 @@ def process_analysis(pdf_bytes: bytes, job_description: str, webhook_url: str):
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
             for page in doc:
                 text += page.get_text("text") + "\n"
-                
+
         if len(text.strip()) < 50:
             raise ValueError("PDF is empty or unreadable.")
 
         # 2. Extract structured data via LLM
         print("🧠 Calling LLM to extract resume data...")
         resume_data = extract_resume_data(text)
-        
+
         # 3. Compute Semantic Similarity Score vs JD
         if embedding_model is None:
             raise Exception("Embedding model is not loaded.")
-        
+
         print("🧮 Computing semantic similarity...")
         resume_embed = embedding_model.encode(text, convert_to_tensor=True)
         jd_embed = embedding_model.encode(job_description, convert_to_tensor=True)
         cosine_score = util.cos_sim(resume_embed, jd_embed).item()
-        
+
         score_percent = max(0, min(100, round(cosine_score * 100)))
-        
+
         # 4. LLM for Missing Skills & Suggestions
         print("🧠 Calling LLM for gap analysis...")
         gap_data = get_suggestions_and_missing(text, job_description)
-        
+
         # 5. Build final webhook payload
         payload = {
             "status": "completed",
@@ -153,7 +153,8 @@ def process_analysis(pdf_bytes: bytes, job_description: str, webhook_url: str):
     if webhook_url:
         print(f"📡 Sending webhook back to {webhook_url}")
         try:
-            requests.post(webhook_url, json=payload, timeout=10)
+            headers = {'X-Internal-Token': internal_token} if internal_token else {}
+            requests.post(webhook_url, json=payload, headers=headers, timeout=10)
             print("✅ Webhook delivered")
         except requests.RequestException as e:
             print(f"❌ Failed to reach webhook: {e}")
@@ -173,6 +174,15 @@ def health():
 
 @app.route('/analyze/async', methods=['POST'])
 def analyze_async():
+    # ── Service Authentication ──────────────────────────────────
+    expected_token = os.environ.get('INTERNAL_NLP_TOKEN', '')
+    provided_token = request.headers.get('X-Internal-Token', '')
+
+    if expected_token and provided_token != expected_token:
+        return jsonify({"error": "Unauthorized"}), 401
+    if not expected_token:
+        print("⚠️ WARNING: INTERNAL_NLP_TOKEN is not set. Service is unauthenticated.")
+
     if 'resume' not in request.files:
         return jsonify({"error": "No resume file provided"}), 400
 
@@ -185,7 +195,7 @@ def analyze_async():
 
     if not webhook_url:
         return jsonify({"error": "webhook_url is required for async processing"}), 400
-        
+
     if not API_KEY or API_KEY == "YOUR_GEMINI_API_KEY_HERE":
         return jsonify({"error": "GEMINI_API_KEY is missing on the server"}), 500
 
@@ -194,7 +204,7 @@ def analyze_async():
     # Start the worker thread
     thread = threading.Thread(
         target=process_analysis,
-        args=(pdf_bytes, job_description, webhook_url)
+        args=(pdf_bytes, job_description, webhook_url, provided_token)
     )
     thread.daemon = True
     thread.start()

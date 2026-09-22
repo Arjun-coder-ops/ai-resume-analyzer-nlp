@@ -28,7 +28,7 @@ const analyzeResume = async (req, res) => {
     });
   }
 
-  // ── Create analysis record with "processing" status ─────
+  // ── Create analysis record with "queued" status ─────
   let analysis;
   try {
     analysis = await Analysis.create({
@@ -37,7 +37,7 @@ const analyzeResume = async (req, res) => {
       resumeOriginalName: req.file.originalname,
       jobTitle: jobTitle || 'Untitled Position',
       jobDescription: jobDescription.trim(),
-      status: 'processing',
+      status: 'queued', // Updated from processing to queued
     });
   } catch (dbError) {
     console.error('DB create error:', dbError);
@@ -45,40 +45,28 @@ const analyzeResume = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to initialize analysis.' });
   }
 
-  // ── Forward PDF + job description to Python NLP service ──
+  // ── Enqueue the job for background processing ──
   try {
-    const formData = new FormData();
-    formData.append('resume', fs.createReadStream(req.file.path), {
-      filename: req.file.originalname,
-      contentType: 'application/pdf',
-    });
-    formData.append('job_description', jobDescription.trim());
-    formData.append('analysis_id', analysis._id.toString());
-    
-    // Webhook URL where Python will POST the results back
     const webhookUrl = `${process.env.APP_URL || 'http://localhost:5000'}/api/analyze/webhook/${analysis._id}`;
-    formData.append('webhook_url', webhookUrl);
 
-    // Fire the request to the Python async endpoint, but DON'T await it
-    axios.post(
-      `${process.env.NLP_SERVICE_URL || 'http://localhost:5001'}/analyze/async`,
-      formData,
-      { headers: { ...formData.getHeaders() } }
-    ).catch(async (nlpError) => {
-      console.error('Failed to trigger NLP service:', nlpError.message);
-      // If the initial connection fails completely
-      analysis.status = 'failed';
-      analysis.errorMessage = 'AI Analysis service is currently offline.';
-      await analysis.save();
+    // Import enqueue dynamically to avoid circular dependencies if queue imports models
+    const { enqueueAnalysis } = require('../queue/analyzeQueue');
+
+    await enqueueAnalysis({
+      analysisId: analysis._id.toString(),
+      resumePath: req.file.path,
+      resumeOriginalName: req.file.originalname,
+      jobDescription: jobDescription.trim(),
+      webhookUrl: webhookUrl
     });
 
     // ── Respond to frontend IMMEDIATELY ───────────────────────────────
     res.json({
       success: true,
-      message: 'Analysis started. Please wait for the AI to process your resume.',
+      message: 'Analysis queued. Please wait for the AI to process your resume.',
       data: {
         analysisId: analysis._id,
-        status: 'processing',
+        status: 'queued',
         jobTitle: analysis.jobTitle,
         resumeName: analysis.resumeOriginalName,
         createdAt: analysis.createdAt,
@@ -86,16 +74,12 @@ const analyzeResume = async (req, res) => {
     });
   } catch (error) {
     console.error('Analysis initiation error:', error);
-    res.status(500).json({ success: false, message: 'Failed to initiate analysis.' });
-  } finally {
-    // Clean up the uploaded file after processing
-    if (req.file && fs.existsSync(req.file.path)) {
-      setTimeout(() => {
-        fs.unlink(req.file.path, (err) => {
-          if (err) console.error('File cleanup error:', err);
-        });
-      }, 5000); // Wait 5s before deleting so Python has time to read it in transmission
-    }
+    fs.unlink(req.file.path, () => {});
+    // Mark as failed if queue fails
+    analysis.status = 'failed';
+    analysis.errorMessage = 'Failed to enqueue analysis job.';
+    await analysis.save();
+    res.status(500).json({ success: false, message: 'Failed to enqueue analysis.' });
   }
 };
 
@@ -105,10 +89,18 @@ const analyzeResume = async (req, res) => {
 // @access  Public (Internal Webhook)
 // ──────────────────────────────────────────────────────────────
 const handleWebhook = async (req, res) => {
+  // ── Webhook Authentication ──────────────────────────────────
+  const expectedToken = process.env.INTERNAL_NLP_TOKEN || '';
+  const providedToken = req.headers['x-internal-token'] || '';
+
+  if (expectedToken && providedToken !== expectedToken) {
+    return res.status(401).json({ success: false, message: 'Unauthorized webhook' });
+  }
+
   const { id } = req.params;
-  const { 
-    status, score, matched_skills, missing_skills, suggestions, 
-    experience, education, projects, error 
+  const {
+    status, score, matched_skills, missing_skills, suggestions,
+    experience, education, projects, error
   } = req.body;
 
   try {
