@@ -11,7 +11,7 @@ export default function AuthPage({ mode }) {
   const navigate = useNavigate()
   const { login, register } = useAuth()
 
-  const [form, setForm]       = useState({ name: '', email: '', password: '' })
+  const [form, setForm]       = useState({ name: '', email: '', password: '', confirmPassword: '' })
   const [showPw, setShowPw]   = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState('')
@@ -30,7 +30,8 @@ export default function AuthPage({ mode }) {
         await login(form.email, form.password)
       } else {
         if (!form.name.trim()) { setError('Name is required'); setLoading(false); return }
-        await register(form.name, form.email, form.password)
+        if (form.password !== form.confirmPassword) { setError('Passwords do not match.'); setLoading(false); return }
+        await register(form.name, form.email, form.password, form.confirmPassword)
       }
       navigate('/dashboard')
     } catch (err) {
@@ -184,6 +185,28 @@ export default function AuthPage({ mode }) {
                 </button>
               </div>
             </div>
+
+            {!isLogin && (
+              <div>
+                <label className="block text-ink-400 text-sm mb-1.5">Confirm Password</label>
+                <div className="relative">
+                  <input
+                    name="confirmPassword"
+                    type={showPw ? 'text' : 'password'}
+                    placeholder="Min. 6 characters"
+                    value={form.confirmPassword}
+                    onChange={handleChange}
+                    className="input-field pr-12"
+                    autoComplete="new-password"
+                    required
+                  />
+                  <button type="button" onClick={() => setShowPw(v => !v)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-ink-500 hover:text-ink-300 transition-colors">
+                    {showPw ? <EyeOff size={17} /> : <Eye size={17} />}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <button type="submit" disabled={loading} className="btn-volt w-full flex items-center justify-center gap-2 mt-2 h-12">
               {loading ? (
