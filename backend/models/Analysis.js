@@ -61,7 +61,7 @@ const analysisSchema = new mongoose.Schema(
     // Track processing status
     status: {
       type: String,
-      enum: ['pending', 'processing', 'completed', 'failed'],
+      enum: ['pending', 'queued', 'processing', 'completed', 'failed'],
       default: 'pending',
     },
     errorMessage: {
