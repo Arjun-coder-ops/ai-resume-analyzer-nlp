@@ -2,9 +2,13 @@
 
 const express = require('express');
 const router = express.Router();
-const { analyzeResume, handleWebhook } = require('../controllers/analyzeController');
+const { analyzeResume, handleWebhook, getQuota } = require('../controllers/analyzeController');
 const { protect } = require('../middleware/authMiddleware');
 const upload = require('../middleware/uploadMiddleware');
+
+// GET /api/analyze/quota
+// Protected: check remaining daily trials for user
+router.get('/quota', protect, getQuota);
 
 // POST /api/analyze
 // Protected: requires JWT

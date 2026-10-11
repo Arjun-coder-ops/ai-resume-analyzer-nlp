@@ -26,6 +26,27 @@ const analyzeResume = async (req, res) => {
     });
   }
 
+  // ── Rate Limiter: 5 trials per user per day ──────────────
+  const DAILY_LIMIT = 5;
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const analysesToday = await Analysis.countDocuments({
+    user: req.user._id,
+    createdAt: { $gte: startOfDay },
+  });
+
+  if (analysesToday >= DAILY_LIMIT) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(429).json({
+      success: false,
+      message: `Daily limit reached. You have used all ${DAILY_LIMIT} free analyses for today. Your quota resets tomorrow at midnight.`,
+      dailyLimit: DAILY_LIMIT,
+      trialsUsed: analysesToday,
+      trialsRemaining: 0,
+    });
+  }
+
   // ── Create analysis record with "processing" status ─────
   let analysis;
   try {
@@ -137,4 +158,40 @@ const handleWebhook = async (req, res) => {
   }
 };
 
-module.exports = { analyzeResume, handleWebhook };
+// ──────────────────────────────────────────────────────────────
+// @route   GET /api/analyze/quota
+// @desc    Get user's daily analysis quota usage (5 trials/day)
+// @access  Private
+// ──────────────────────────────────────────────────────────────
+const getQuota = async (req, res) => {
+  try {
+    const DAILY_LIMIT = 5;
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const analysesToday = await Analysis.countDocuments({
+      user: req.user._id,
+      createdAt: { $gte: startOfDay },
+    });
+
+    const remaining = Math.max(0, DAILY_LIMIT - analysesToday);
+
+    const tomorrow = new Date();
+    tomorrow.setHours(24, 0, 0, 0);
+
+    res.json({
+      success: true,
+      data: {
+        dailyLimit: DAILY_LIMIT,
+        trialsUsed: analysesToday,
+        trialsRemaining: remaining,
+        resetsAt: tomorrow,
+      },
+    });
+  } catch (error) {
+    console.error('Quota fetch error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch quota.' });
+  }
+};
+
+module.exports = { analyzeResume, handleWebhook, getQuota };

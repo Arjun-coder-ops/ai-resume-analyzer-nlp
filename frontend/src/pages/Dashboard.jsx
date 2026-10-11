@@ -30,10 +30,25 @@ export default function Dashboard() {
   const [historyLoading, setHistoryLoading] = useState(true)
   const [activeTab, setActiveTab]     = useState('analyze') // 'analyze' | 'history'
 
-  // Load history on mount
+  // ── Daily Quota State (5 trials per user per day) ────────
+  const [quota, setQuota] = useState({ dailyLimit: 5, trialsUsed: 0, trialsRemaining: 5 })
+
+  // Load history and quota on mount
   useEffect(() => {
     loadHistory()
+    loadQuota()
   }, [])
+
+  const loadQuota = async () => {
+    try {
+      const { data } = await api.get('/analyze/quota')
+      if (data?.data) {
+        setQuota(data.data)
+      }
+    } catch {
+      // Non-critical, fallback to defaults
+    }
+  }
 
   const loadHistory = async () => {
     setHistoryLoading(true)
@@ -50,6 +65,10 @@ export default function Dashboard() {
   // ── Submit analysis ──────────────────────────────────────
   const handleAnalyze = async (e) => {
     e.preventDefault()
+    if (quota.trialsRemaining <= 0) {
+      setError('Daily trial limit reached. You have completed 5 analyses today. Your quota resets tomorrow at midnight.')
+      return
+    }
     if (!file) { setError('Please upload your resume PDF.'); return }
     if (jobDesc.trim().length < 50) { setError('Job description must be at least 50 characters.'); return }
 
@@ -67,12 +86,15 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
 
+      loadQuota()
+
       if (data.data && (data.data.status === 'processing' || data.data.status === 'queued')) {
         pollAnalysis(data.data.analysisId)
       } else if (data.data && data.data.status === 'completed') {
         setResult(data.data)
         setAnalyzing(false)
         loadHistory()
+        loadQuota()
         setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
       } else {
         pollAnalysis(data.data?.analysisId || data.data?._id)
@@ -81,6 +103,7 @@ export default function Dashboard() {
       const msg = err.response?.data?.message || 'Analysis failed. Please check that your NLP service is running.'
       setError(msg)
       setAnalyzing(false)
+      loadQuota()
     }
   }
 
@@ -93,10 +116,12 @@ export default function Dashboard() {
         setResult(analysis)
         setAnalyzing(false)
         loadHistory()
+        loadQuota()
         setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
       } else if (analysis.status === 'failed') {
         setError(analysis.errorMessage || 'AI processing failed.')
         setAnalyzing(false)
+        loadQuota()
       } else {
         // Still processing or queued
         const MAX_POLLS = 100; // ~5 mins at 3s intervals
@@ -137,9 +162,21 @@ export default function Dashboard() {
         <div className="mb-8 animate-fade-up">
           <p className="section-label mb-1">Dashboard</p>
           <div className="flex items-end justify-between flex-wrap gap-4">
-            <h1 className="font-display text-3xl font-700 text-ink-50">
-              Hey, {user?.name?.split(' ')[0]} 👋
-            </h1>
+            <div>
+              <h1 className="font-display text-3xl font-700 text-ink-50">
+                Hey, {user?.name?.split(' ')[0]} 👋
+              </h1>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-xs text-ink-400 font-medium">Daily Free Trials:</span>
+                <span className={`text-xs font-mono font-bold px-2.5 py-0.5 rounded-full border ${
+                  quota.trialsRemaining > 0
+                    ? 'text-volt-400 bg-volt-400/10 border-volt-400/30'
+                    : 'text-red-400 bg-red-400/10 border-red-400/30'
+                }`}>
+                  {quota.trialsRemaining} / {quota.dailyLimit} remaining today
+                </span>
+              </div>
+            </div>
             {result && (
               <button onClick={handleReset}
                 className="btn-ghost flex items-center gap-2 text-sm">
@@ -231,13 +268,33 @@ export default function Dashboard() {
                     </div>
                   )}
 
+                  {/* Daily Limit Warning if exhausted */}
+                  {quota.trialsRemaining === 0 && (
+                    <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-800/40 text-xs text-amber-300 flex items-start gap-2.5 animate-scale-in">
+                      <AlertCircle size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-semibold block text-amber-200">Daily Free Trials Limit Reached (5/5)</span>
+                        <span className="mt-0.5 block leading-relaxed text-ink-300">
+                          You have used all 5 analyses for today. Your daily trials will refresh tomorrow at midnight.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Submit */}
-                  <button type="submit" disabled={analyzing}
-                    className="btn-volt w-full flex items-center justify-center gap-2.5 h-12">
+                  <button type="submit" disabled={analyzing || quota.trialsRemaining === 0}
+                    className={`btn-volt w-full flex items-center justify-center gap-2.5 h-12 ${
+                      quota.trialsRemaining === 0 ? 'opacity-50 cursor-not-allowed saturate-50' : ''
+                    }`}>
                     {analyzing ? (
                       <>
                         <Spinner size="sm" color="white" />
                         <span className="font-display">Analyzing…</span>
+                      </>
+                    ) : quota.trialsRemaining === 0 ? (
+                      <>
+                        <AlertCircle size={16} />
+                        <span className="font-display">Daily Limit Reached (5/5 Used)</span>
                       </>
                     ) : (
                       <>
