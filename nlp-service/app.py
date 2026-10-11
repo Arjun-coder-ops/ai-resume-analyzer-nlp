@@ -2,6 +2,7 @@ import os
 import re
 import threading
 import json
+import time
 import fitz  # PyMuPDF
 import requests
 from flask import Flask, request, jsonify
@@ -35,14 +36,30 @@ if API_KEY and API_KEY != "YOUR_GEMINI_API_KEY_HERE":
 else:
     genai = None
 
-# Model fallback chain
-LLM_MODELS = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-flash-latest', 'gemini-pro']
+# Global rate-limit cooldown tracker
+_gemini_cooldown_until = 0.0
+
+# Model fallback chain (Prioritize 1.5-flash with 15 RPM over 2.5-flash preview with 5 RPM)
+LLM_MODELS = ['gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-2.0-flash', 'gemini-2.5-flash']
+
+
+def is_rate_limit_error(e: Exception) -> bool:
+    """Check if exception is caused by HTTP 429 quota exhaustion."""
+    err_str = str(e).lower()
+    return "429" in err_str or "quota" in err_str or "resourceexhausted" in err_str or "rate limit" in err_str
 
 
 def call_llm(prompt: str) -> str:
-    """Wrapper to call Gemini API with model fallback chain."""
+    """Wrapper to call Gemini API with model fallback chain and rate limit circuit-breaker."""
+    global _gemini_cooldown_until
     if not API_KEY or API_KEY == "YOUR_GEMINI_API_KEY_HERE" or genai is None:
         raise ValueError("GEMINI_API_KEY is not configured.")
+
+    now = time.time()
+    if now < _gemini_cooldown_until:
+        remaining = int(_gemini_cooldown_until - now)
+        print(f"[INFO] Gemini API currently in 429 rate-limit cooldown ({remaining}s remaining). Activating local NLP engine.")
+        raise RuntimeError(f"Gemini API rate-limit cooldown ({remaining}s remaining). Falling back to offline NLP.")
 
     last_error = None
     for model_name in LLM_MODELS:
@@ -53,9 +70,15 @@ def call_llm(prompt: str) -> str:
                 return response.text
         except Exception as e:
             last_error = e
-            print(f"[WARN] Model {model_name} failed: {e}. Trying next fallback...")
+            if is_rate_limit_error(e):
+                # Free-tier project quota hit - do not spam remaining models
+                print(f"[WARN] Gemini quota exceeded (429) on {model_name}. Activating 45s circuit breaker cooldown.")
+                _gemini_cooldown_until = time.time() + 45.0
+                break
+            else:
+                print(f"[WARN] Model {model_name} failed: {e}. Trying next fallback...")
 
-    raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
+    raise RuntimeError(f"All Gemini models failed or rate-limited. Last error: {last_error}")
 
 
 def clean_and_parse_json(raw_text: str) -> dict:
