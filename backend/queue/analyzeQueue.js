@@ -1,38 +1,21 @@
-const { Queue, Worker } = require('bullmq');
+// queue/analyzeQueue.js - Resilient Analysis Job Queue with in-memory and Redis support
+
 const axios = require('axios');
 const fs = require('fs');
 const FormData = require('form-data');
 const Analysis = require('../models/Analysis');
 
-// We use REDIS_URL from env, or a fallback that will fail if not running
-const redisOptions = { 
-  maxRetriesPerRequest: null 
-};
-
-// If REDIS_URL exists, ioredis will parse it properly when passed to the constructor.
-// BullMQ allows passing a Redis instance.
-const IORedis = process.env.NODE_ENV === 'test' ? require('ioredis-mock') : require('ioredis');
-const connection = process.env.REDIS_URL 
-  ? new IORedis(process.env.REDIS_URL, redisOptions)
-  : new IORedis(redisOptions);
-
-const analyzeQueue = new Queue('analyzeResume', { 
-  connection 
-});
-
-// Worker processes the queue
-// Controlled concurrency to prevent Gemini API quota limits
+// Controlled settings
 const QUEUE_CONCURRENCY = parseInt(process.env.QUEUE_CONCURRENCY || '1', 10);
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3', 10);
 const RETRY_DELAY = parseInt(process.env.RETRY_DELAY || '10000', 10);
 
-// Note: BullMQ rate limiter ensures we don't exceed Gemini limits
-// Gemini Limit: 5 RPM = 1 request every 12s. Since each analysis does 2 requests, 
-// we rate limit to 1 job per 30 seconds to be extremely safe (~4 requests/min).
-const rateLimitDuration = parseInt(process.env.QUEUE_RATE_LIMIT_DURATION || '30000', 10);
-
-const worker = new Worker('analyzeResume', async (job) => {
-  const { analysisId, resumePath, resumeOriginalName, jobDescription, webhookUrl } = job.data;
+/**
+ * Core processing function that executes resume analysis via Python NLP service
+ * and directly updates the database.
+ */
+const processAnalysisJob = async (jobData) => {
+  const { analysisId, resumePath, resumeOriginalName, jobDescription, webhookUrl } = jobData;
   console.log(`[Queue Worker] Processing analysis job: ${analysisId}`);
 
   let analysis = await Analysis.findById(analysisId);
@@ -40,7 +23,7 @@ const worker = new Worker('analyzeResume', async (job) => {
     throw new Error(`Analysis ${analysisId} not found in DB`);
   }
 
-  // Update status to processing
+  // Set status to processing
   analysis.status = 'processing';
   await analysis.save();
 
@@ -52,88 +35,135 @@ const worker = new Worker('analyzeResume', async (job) => {
     });
     formData.append('job_description', jobDescription);
     formData.append('analysis_id', analysisId);
-    formData.append('webhook_url', webhookUrl);
+    if (webhookUrl) {
+      formData.append('webhook_url', webhookUrl);
+    }
 
-    const nlpUrl = `${process.env.NLP_SERVICE_URL || 'http://localhost:5001'}/analyze/async`;
-    
-    // Trigger Python service. It will return 202 quickly.
-    await axios.post(nlpUrl, formData, {
+    const nlpUrl = `${process.env.NLP_SERVICE_URL || 'http://localhost:5001'}/analyze`;
+
+    // Trigger Python service directly with timeout
+    const response = await axios.post(nlpUrl, formData, {
       headers: {
         ...formData.getHeaders(),
-        'X-Internal-Token': process.env.INTERNAL_NLP_TOKEN || ''
-      }
+        'X-Internal-Token': process.env.INTERNAL_NLP_TOKEN || '',
+      },
+      timeout: 120000, // 2 minutes
     });
 
-    // To prevent the worker from moving on to the next job and bursting Gemini requests,
-    // we MUST wait for the webhook to complete the analysis.
-    // We poll MongoDB locally in the worker to wait for the state transition.
-    // Timeout after 3 minutes.
-    const startTime = Date.now();
-    const timeout = 3 * 60 * 1000;
+    const result = response.data;
+    if (result && result.status !== 'failed') {
+      analysis.score = Math.round(result.score || 0);
+      analysis.matchedSkills = result.matched_skills || [];
+      analysis.missingSkills = result.missing_skills || [];
+      analysis.extractedSkills = result.extracted_skills || [];
+      analysis.suggestions = result.suggestions || [];
+      analysis.candidateInfo = result.candidate_info || {};
+      analysis.summary = result.summary || '';
+      analysis.experience = result.experience || [];
+      analysis.education = result.education || [];
+      analysis.projects = result.projects || [];
+      analysis.certifications = result.certifications || [];
+      analysis.languages = result.languages || [];
+      analysis.achievements = result.achievements || [];
+      analysis.status = 'completed';
+      analysis.errorMessage = null;
 
-    while (Date.now() - startTime < timeout) {
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5s
-      const current = await Analysis.findById(analysisId);
-      if (current.status === 'completed') {
-        console.log(`[Queue Worker] Job ${analysisId} completed successfully`);
-        return { success: true };
-      }
-      if (current.status === 'failed') {
-        throw new Error(current.errorMessage || 'AI Analysis Failed in webhook');
-      }
+      await analysis.save();
+      console.log(`[Queue Worker] Job ${analysisId} completed successfully`);
+      return { success: true };
+    } else {
+      throw new Error(result?.error || 'AI analysis failed');
     }
-
-    throw new Error('Analysis timed out waiting for webhook response from Python.');
   } catch (error) {
     console.error(`[Queue Worker] Error processing job ${analysisId}:`, error.message);
-    throw error; // Let BullMQ retry it based on MAX_RETRIES
+    analysis.status = 'failed';
+    analysis.errorMessage = error.response?.data?.error || error.message || 'AI processing failed.';
+    await analysis.save();
+    throw error;
   } finally {
-    // Only cleanup the file if we are completed or have exhausted retries.
-    // BullMQ gives us attemptsMade. If attemptsMade >= MAX_RETRIES, it will fail permanently.
-    // We defer cleanup to the controller or queue events to be safer.
-  }
-}, {
-  connection,
-  concurrency: QUEUE_CONCURRENCY,
-  limiter: {
-    max: 1,
-    duration: rateLimitDuration,
-  }
-});
-
-// Event listeners for robust error handling and file cleanup
-worker.on('completed', async (job) => {
-  if (job.data.resumePath && fs.existsSync(job.data.resumePath)) {
-    fs.unlink(job.data.resumePath, () => {});
-  }
-});
-
-worker.on('failed', async (job, err) => {
-  console.error(`[Queue Worker] Job ${job.id} failed:`, err.message);
-  
-  if (job.attemptsMade >= MAX_RETRIES) {
-    console.error(`[Queue Worker] Job ${job.id} exhausted all retries. Setting status to failed.`);
-    // Update DB on ultimate failure
-    await Analysis.findByIdAndUpdate(job.data.analysisId, {
-      status: 'failed',
-      errorMessage: err.message || 'AI processing failed after multiple retries.',
-    });
-    // Cleanup file
-    if (job.data.resumePath && fs.existsSync(job.data.resumePath)) {
-      fs.unlink(job.data.resumePath, () => {});
+    // Clean up temporary resume file
+    if (resumePath && fs.existsSync(resumePath)) {
+      fs.unlink(resumePath, (err) => {
+        if (err) console.error('[Queue Worker] Cleanup error:', err.message);
+      });
     }
   }
-});
-
-const enqueueAnalysis = async (jobData) => {
-  return await analyzeQueue.add('analyzeResume', jobData, {
-    attempts: MAX_RETRIES,
-    backoff: {
-      type: 'fixed',
-      delay: RETRY_DELAY,
-    },
-    jobId: jobData.analysisId, // Prevent duplicate jobs for the same analysis
-  });
 };
 
-module.exports = { enqueueAnalysis, analyzeQueue, worker };
+let analyzeQueue = null;
+let worker = null;
+
+// Only instantiate BullMQ when not in test environment and REDIS_URL is configured
+const hasRedis = Boolean(process.env.REDIS_URL && process.env.REDIS_URL.trim());
+const isTest = process.env.NODE_ENV === 'test';
+
+if (!isTest && hasRedis) {
+  try {
+    const { Queue, Worker } = require('bullmq');
+    const IORedis = require('ioredis');
+
+    const redisOptions = { maxRetriesPerRequest: null };
+    const connection = new IORedis(process.env.REDIS_URL, redisOptions);
+
+    connection.on('error', (err) => {
+      console.error('[Redis Error]', err.message);
+    });
+
+    analyzeQueue = new Queue('analyzeResume', { connection });
+
+    worker = new Worker('analyzeResume', async (job) => {
+      return await processAnalysisJob(job.data);
+    }, {
+      connection,
+      concurrency: QUEUE_CONCURRENCY,
+    });
+
+    worker.on('failed', async (job, err) => {
+      console.error(`[BullMQ Worker] Job ${job?.id} failed:`, err.message);
+    });
+
+    console.log('✅ BullMQ Redis queue worker initialized');
+  } catch (e) {
+    console.warn('⚠️ BullMQ initialization failed, falling back to in-memory async processing:', e.message);
+    analyzeQueue = null;
+    worker = null;
+  }
+}
+
+/**
+ * Enqueue analysis job using Redis BullMQ if available,
+ * or asynchronous in-memory processing if Redis is unavailable.
+ */
+const enqueueAnalysis = async (jobData) => {
+  if (isTest) {
+    return { id: jobData.analysisId };
+  }
+
+  if (analyzeQueue) {
+    try {
+      return await analyzeQueue.add('analyzeResume', jobData, {
+        attempts: MAX_RETRIES,
+        backoff: {
+          type: 'fixed',
+          delay: RETRY_DELAY,
+        },
+        jobId: jobData.analysisId,
+      });
+    } catch (err) {
+      console.warn('⚠️ Redis enqueue failed, using in-memory async fallback:', err.message);
+    }
+  }
+
+  // In-Memory Asynchronous Fallback
+  setImmediate(async () => {
+    try {
+      await processAnalysisJob(jobData);
+    } catch (err) {
+      console.error('[In-Memory Worker] Job execution failed:', err.message);
+    }
+  });
+
+  return { id: jobData.analysisId };
+};
+
+module.exports = { enqueueAnalysis, analyzeQueue, worker, processAnalysisJob };

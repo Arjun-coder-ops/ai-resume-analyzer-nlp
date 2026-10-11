@@ -41,20 +41,50 @@ const analysisSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    extractedSkills: {
+      type: [String],
+      default: [],
+    },
     suggestions: {
       type: [String],
       default: [],
     },
-    // Extracted by LLM
-    experience: {
+    // Candidate Details
+    candidateInfo: {
+      name: { type: String, default: '' },
+      email: { type: String, default: '' },
+      phone: { type: String, default: '' },
+      location: { type: String, default: '' },
+      linkedin: { type: String, default: '' },
+      github: { type: String, default: '' },
+      portfolio: { type: String, default: '' },
+    },
+    // Full Section Details (no truncation)
+    summary: {
       type: String,
       default: '',
+    },
+    experience: {
+      type: mongoose.Schema.Types.Mixed, // String or array of structured role objects
+      default: [],
     },
     education: {
-      type: String,
-      default: '',
+      type: mongoose.Schema.Types.Mixed, // String or array of structured education objects
+      default: [],
     },
     projects: {
+      type: mongoose.Schema.Types.Mixed, // Array of strings or array of structured project objects
+      default: [],
+    },
+    certifications: {
+      type: [String],
+      default: [],
+    },
+    languages: {
+      type: [String],
+      default: [],
+    },
+    achievements: {
       type: [String],
       default: [],
     },
@@ -62,7 +92,7 @@ const analysisSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ['pending', 'queued', 'processing', 'completed', 'failed'],
-      default: 'pending',
+      default: 'processing',
     },
     errorMessage: {
       type: String,

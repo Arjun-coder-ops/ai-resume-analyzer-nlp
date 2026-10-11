@@ -1,12 +1,15 @@
 // tests/health.test.js - Integration tests for the API health and error handling
+process.env.NODE_ENV = 'test';
 const request = require('supertest');
 const app = require('../server');
 const mongoose = require('mongoose');
 
 describe('API Engineering & Reliability Tests', () => {
-  // Close DB connection after tests to prevent memory leaks
+  // Close DB connection after tests if open
   afterAll(async () => {
-    await mongoose.connection.close();
+    if (mongoose.connection && mongoose.connection.readyState !== 0) {
+      await mongoose.connection.close();
+    }
   });
 
   describe('Health Check Endpoint', () => {

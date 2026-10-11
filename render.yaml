@@ -18,6 +18,12 @@ services:
         sync: false
       - key: NLP_SERVICE_URL
         sync: false
+      - key: APP_URL
+        sync: false
+      - key: INTERNAL_NLP_TOKEN
+        sync: false
+      - key: REDIS_URL
+        sync: false
 
   - type: web
     name: resume-analyzer-nlp
@@ -31,4 +37,6 @@ services:
       - key: PORT
         value: 10001
       - key: GEMINI_API_KEY
+        sync: false
+      - key: INTERNAL_NLP_TOKEN
         sync: false

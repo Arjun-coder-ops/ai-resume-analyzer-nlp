@@ -1,14 +1,12 @@
 // controllers/analyzeController.js - Resume analysis orchestration
 
-const axios = require('axios');
-const FormData = require('form-data');
 const fs = require('fs');
-const path = require('path');
 const Analysis = require('../models/Analysis');
+const { enqueueAnalysis } = require('../queue/analyzeQueue');
 
 // ──────────────────────────────────────────────────────────────
 // @route   POST /api/analyze
-// @desc    Upload resume + job description → call NLP → save results
+// @desc    Upload resume + job description → enqueue analysis → return job status
 // @access  Private
 // ──────────────────────────────────────────────────────────────
 const analyzeResume = async (req, res) => {
@@ -28,16 +26,16 @@ const analyzeResume = async (req, res) => {
     });
   }
 
-  // ── Create analysis record with "queued" status ─────
+  // ── Create analysis record with "processing" status ─────
   let analysis;
   try {
     analysis = await Analysis.create({
       user: req.user._id,
       resumeFilename: req.file.filename,
       resumeOriginalName: req.file.originalname,
-      jobTitle: jobTitle || 'Untitled Position',
+      jobTitle: jobTitle ? jobTitle.trim() : 'Untitled Position',
       jobDescription: jobDescription.trim(),
-      status: 'queued', // Updated from processing to queued
+      status: 'processing',
     });
   } catch (dbError) {
     console.error('DB create error:', dbError);
@@ -45,28 +43,25 @@ const analyzeResume = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to initialize analysis.' });
   }
 
-  // ── Enqueue the job for background processing ──
+  // ── Enqueue the job for background/async processing ──
   try {
     const webhookUrl = `${process.env.APP_URL || 'http://localhost:5000'}/api/analyze/webhook/${analysis._id}`;
-
-    // Import enqueue dynamically to avoid circular dependencies if queue imports models
-    const { enqueueAnalysis } = require('../queue/analyzeQueue');
 
     await enqueueAnalysis({
       analysisId: analysis._id.toString(),
       resumePath: req.file.path,
       resumeOriginalName: req.file.originalname,
       jobDescription: jobDescription.trim(),
-      webhookUrl: webhookUrl
+      webhookUrl: webhookUrl,
     });
 
     // ── Respond to frontend IMMEDIATELY ───────────────────────────────
     res.json({
       success: true,
-      message: 'Analysis queued. Please wait for the AI to process your resume.',
+      message: 'Analysis initiated. AI is processing all sections of your resume.',
       data: {
         analysisId: analysis._id,
-        status: 'queued',
+        status: 'processing',
         jobTitle: analysis.jobTitle,
         resumeName: analysis.resumeOriginalName,
         createdAt: analysis.createdAt,
@@ -75,11 +70,10 @@ const analyzeResume = async (req, res) => {
   } catch (error) {
     console.error('Analysis initiation error:', error);
     fs.unlink(req.file.path, () => {});
-    // Mark as failed if queue fails
     analysis.status = 'failed';
-    analysis.errorMessage = 'Failed to enqueue analysis job.';
+    analysis.errorMessage = 'Failed to initiate analysis job.';
     await analysis.save();
-    res.status(500).json({ success: false, message: 'Failed to enqueue analysis.' });
+    res.status(500).json({ success: false, message: 'Failed to initiate analysis.' });
   }
 };
 
@@ -99,8 +93,9 @@ const handleWebhook = async (req, res) => {
 
   const { id } = req.params;
   const {
-    status, score, matched_skills, missing_skills, suggestions,
-    experience, education, projects, error
+    status, score, matched_skills, missing_skills, extracted_skills, suggestions,
+    candidate_info, summary, experience, education, projects,
+    certifications, languages, achievements, error
   } = req.body;
 
   try {
@@ -116,11 +111,18 @@ const handleWebhook = async (req, res) => {
       analysis.score = Math.round(score || 0);
       analysis.matchedSkills = matched_skills || [];
       analysis.missingSkills = missing_skills || [];
+      analysis.extractedSkills = extracted_skills || [];
       analysis.suggestions = suggestions || [];
-      analysis.experience = experience || '';
-      analysis.education = education || '';
+      analysis.candidateInfo = candidate_info || {};
+      analysis.summary = summary || '';
+      analysis.experience = experience || [];
+      analysis.education = education || [];
       analysis.projects = projects || [];
+      analysis.certifications = certifications || [];
+      analysis.languages = languages || [];
+      analysis.achievements = achievements || [];
       analysis.status = 'completed';
+      analysis.errorMessage = null;
     }
 
     await analysis.save();

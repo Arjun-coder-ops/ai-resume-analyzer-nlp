@@ -66,13 +66,15 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
 
-      if (data.data && data.data.status === 'processing') {
+      if (data.data && (data.data.status === 'processing' || data.data.status === 'queued')) {
         pollAnalysis(data.data.analysisId)
-      } else {
+      } else if (data.data && data.data.status === 'completed') {
         setResult(data.data)
         setAnalyzing(false)
         loadHistory()
         setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+      } else {
+        pollAnalysis(data.data?.analysisId || data.data?._id)
       }
     } catch (err) {
       const msg = err.response?.data?.message || 'Analysis failed. Please check that your NLP service is running.'
@@ -312,16 +314,8 @@ export default function Dashboard() {
                       onDelete={(id) => setHistory(h => h.filter(a => a._id !== id))}
                       onSelect={(a) => {
                         setActiveTab('analyze')
-                        // Show the result from history
-                        setResult({
-                          score: a.score,
-                          matchedSkills: a.matchedSkills,
-                          missingSkills: a.missingSkills,
-                          suggestions: a.suggestions,
-                          jobTitle: a.jobTitle,
-                          resumeName: a.resumeOriginalName,
-                          createdAt: a.createdAt,
-                        })
+                        // Show the full result from history with all sections intact
+                        setResult(a)
                         setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth' }), 100)
                       }}
                     />
