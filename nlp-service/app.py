@@ -39,8 +39,11 @@ else:
 # Global rate-limit cooldown tracker
 _gemini_cooldown_until = 0.0
 
-# Model fallback chain (Using active Google Gemini production models)
-LLM_MODELS = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.5-flash']
+# Per-model cooldown dictionary to avoid re-querying models that are currently quota-exhausted
+_model_cooldowns = {}
+
+# Model fallback chain: gemini-2.5-flash is PRIMARY (#1). Fallbacks are ONLY used when 2.5 limits are reached.
+LLM_MODELS = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.5-flash']
 
 
 def is_rate_limit_error(e: Exception) -> bool:
@@ -50,7 +53,11 @@ def is_rate_limit_error(e: Exception) -> bool:
 
 
 def call_llm(prompt: str) -> str:
-    """Wrapper to call Gemini API with model fallback chain and rate limit circuit-breaker."""
+    """
+    Wrapper to call Gemini API.
+    Always prioritizes gemini-2.5-flash. Fallback models are ONLY accessed
+    when gemini-2.5-flash reaches its rate or daily quota limit.
+    """
     global _gemini_cooldown_until
     if not API_KEY or API_KEY == "YOUR_GEMINI_API_KEY_HERE" or genai is None:
         raise ValueError("GEMINI_API_KEY is not configured.")
@@ -58,11 +65,15 @@ def call_llm(prompt: str) -> str:
     now = time.time()
     if now < _gemini_cooldown_until:
         remaining = int(_gemini_cooldown_until - now)
-        print(f"[INFO] Gemini API currently in 429 rate-limit cooldown ({remaining}s remaining). Activating local NLP engine.")
-        raise RuntimeError(f"Gemini API rate-limit cooldown ({remaining}s remaining). Falling back to offline NLP.")
+        print(f"[INFO] All Gemini models currently in cooldown ({remaining}s remaining). Activating local NLP engine.")
+        raise RuntimeError(f"Gemini API cooldown ({remaining}s remaining). Falling back to offline NLP.")
 
     last_error = None
     for model_name in LLM_MODELS:
+        # If this model recently hit a 429 quota limit, skip it until cooldown expires
+        if model_name in _model_cooldowns and now < _model_cooldowns[model_name]:
+            continue
+
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
@@ -71,7 +82,8 @@ def call_llm(prompt: str) -> str:
         except Exception as e:
             last_error = e
             if is_rate_limit_error(e):
-                print(f"[WARN] Gemini model {model_name} rate-limited or quota exceeded (429). Attempting next model...")
+                print(f"[WARN] Gemini model {model_name} quota hit (429). Setting 5m cooldown. Trying next fallback...")
+                _model_cooldowns[model_name] = now + 300.0
                 continue
             else:
                 print(f"[WARN] Model {model_name} failed: {e}. Trying next fallback...")
