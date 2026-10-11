@@ -53,10 +53,13 @@ const processAnalysisJob = async (jobData) => {
     const result = response.data;
     if (result && result.status !== 'failed') {
       analysis.score = Math.round(result.score || 0);
+      analysis.matchLevel = result.match_level || 'Good Match';
+      analysis.scoringBreakdown = result.scoring_breakdown || {};
       analysis.matchedSkills = result.matched_skills || [];
       analysis.missingSkills = result.missing_skills || [];
       analysis.extractedSkills = result.extracted_skills || [];
       analysis.suggestions = result.suggestions || [];
+      analysis.recommendations = result.recommendations || {};
       analysis.candidateInfo = result.candidate_info || {};
       analysis.summary = result.summary || '';
       analysis.experience = result.experience || [];

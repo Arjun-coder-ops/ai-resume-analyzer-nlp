@@ -7,6 +7,7 @@ import DropZone from '../components/DropZone'
 import ResultsPanel from '../components/ResultsPanel'
 import HistoryCard from '../components/HistoryCard'
 import Spinner from '../components/Spinner'
+import ErrorBoundary from '../components/ErrorBoundary'
 import api from '../utils/api'
 import {
   Zap, History, PlusCircle, Briefcase, AlertCircle,
@@ -277,8 +278,26 @@ export default function Dashboard() {
                 <EmptyState />
               )}
 
+              {!analyzing && !result && error && (
+                <div className="glass-card p-8 text-center animate-fade-in border-red-500/20 bg-red-500/5">
+                  <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-3">
+                    <AlertCircle size={22} className="text-red-400" />
+                  </div>
+                  <h3 className="font-display font-600 text-ink-200 text-base mb-1">Analysis Error</h3>
+                  <p className="text-red-300 text-sm max-w-sm mx-auto leading-relaxed">{error}</p>
+                  <button
+                    onClick={() => setError('')}
+                    className="btn-ghost text-xs mt-4 px-3 py-1.5"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
               {!analyzing && result && (
-                <ResultsPanel data={result} />
+                <ErrorBoundary onReset={handleReset}>
+                  <ResultsPanel data={result} />
+                </ErrorBoundary>
               )}
             </div>
           </div>

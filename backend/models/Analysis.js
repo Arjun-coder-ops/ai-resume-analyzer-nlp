@@ -33,6 +33,14 @@ const analysisSchema = new mongoose.Schema(
       max: 100,
       default: 0,
     },
+    matchLevel: {
+      type: String,
+      default: 'Good Match',
+    },
+    scoringBreakdown: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
     matchedSkills: {
       type: [String],
       default: [],
@@ -48,6 +56,10 @@ const analysisSchema = new mongoose.Schema(
     suggestions: {
       type: [String],
       default: [],
+    },
+    recommendations: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
     // Candidate Details
     candidateInfo: {

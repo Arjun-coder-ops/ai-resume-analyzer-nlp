@@ -93,7 +93,8 @@ const handleWebhook = async (req, res) => {
 
   const { id } = req.params;
   const {
-    status, score, matched_skills, missing_skills, extracted_skills, suggestions,
+    status, score, match_level, scoring_breakdown, recommendations,
+    matched_skills, missing_skills, extracted_skills, suggestions,
     candidate_info, summary, experience, education, projects,
     certifications, languages, achievements, error
   } = req.body;
@@ -109,6 +110,9 @@ const handleWebhook = async (req, res) => {
       analysis.errorMessage = error || 'AI processing failed.';
     } else {
       analysis.score = Math.round(score || 0);
+      analysis.matchLevel = match_level || 'Good Match';
+      analysis.scoringBreakdown = scoring_breakdown || {};
+      analysis.recommendations = recommendations || {};
       analysis.matchedSkills = matched_skills || [];
       analysis.missingSkills = missing_skills || [];
       analysis.extractedSkills = extracted_skills || [];
