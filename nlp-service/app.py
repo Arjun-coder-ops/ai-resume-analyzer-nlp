@@ -39,8 +39,8 @@ else:
 # Global rate-limit cooldown tracker
 _gemini_cooldown_until = 0.0
 
-# Model fallback chain (Prioritize 1.5-flash with 15 RPM over 2.5-flash preview with 5 RPM)
-LLM_MODELS = ['gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-2.0-flash', 'gemini-2.5-flash']
+# Model fallback chain (Using active Google Gemini production models)
+LLM_MODELS = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.5-flash']
 
 
 def is_rate_limit_error(e: Exception) -> bool:
@@ -71,13 +71,14 @@ def call_llm(prompt: str) -> str:
         except Exception as e:
             last_error = e
             if is_rate_limit_error(e):
-                # Free-tier project quota hit - do not spam remaining models
-                print(f"[WARN] Gemini quota exceeded (429) on {model_name}. Activating 45s circuit breaker cooldown.")
-                _gemini_cooldown_until = time.time() + 45.0
-                break
+                print(f"[WARN] Gemini model {model_name} rate-limited or quota exceeded (429). Attempting next model...")
+                continue
             else:
                 print(f"[WARN] Model {model_name} failed: {e}. Trying next fallback...")
 
+    # If all models in the fallback chain were exhausted or rate limited:
+    print(f"[WARN] All Gemini models failed or rate-limited. Activating 45s circuit breaker cooldown.")
+    _gemini_cooldown_until = time.time() + 45.0
     raise RuntimeError(f"All Gemini models failed or rate-limited. Last error: {last_error}")
 
 
