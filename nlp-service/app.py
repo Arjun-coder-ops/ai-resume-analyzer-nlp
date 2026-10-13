@@ -55,8 +55,11 @@ def is_rate_limit_error(e: Exception) -> bool:
     return "429" in err_str or "quota" in err_str or "resourceexhausted" in err_str or "rate limit" in err_str
 
 
+GROQ_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b']
+
+
 def call_groq(prompt: str) -> str:
-    """Execute inference via Groq LPU using Llama-3.3-70b-versatile (14,400 requests/day free tier)."""
+    """Execute inference via Groq LPU using high-performance open models (14,400 requests/day free tier)."""
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY is not configured.")
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -64,26 +67,36 @@ def call_groq(prompt: str) -> str:
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "model": "llama-3.3-70b-versatile",
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are an elite ATS recruitment algorithm and structured resume evaluation expert. Respond ONLY with a single valid JSON object strictly adhering to the requested schema without markdown formatting or commentary."
-            },
-            {
-                "role": "user",
-                "content": prompt
+
+    last_err = None
+    for model_name in GROQ_MODELS:
+        try:
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are an elite ATS recruitment algorithm and structured resume evaluation expert. Respond ONLY with a single valid JSON object strictly adhering to the requested schema without markdown formatting or commentary."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.1,
+                "response_format": {"type": "json_object"}
             }
-        ],
-        "temperature": 0.1,
-        "response_format": {"type": "json_object"}
-    }
-    resp = requests.post(url, headers=headers, json=payload, timeout=25)
-    if resp.status_code == 200:
-        return resp.json()["choices"][0]["message"]["content"]
-    else:
-        raise RuntimeError(f"Groq API error ({resp.status_code}): {resp.text}")
+            resp = requests.post(url, headers=headers, json=payload, timeout=25)
+            if resp.status_code == 200:
+                return resp.json()["choices"][0]["message"]["content"]
+            else:
+                last_err = f"Groq {model_name} HTTP {resp.status_code}: {resp.text}"
+                print(f"[WARN] {last_err}. Trying next Groq model...")
+        except Exception as e:
+            last_err = str(e)
+            print(f"[WARN] Groq {model_name} exception: {e}. Trying next Groq model...")
+
+    raise RuntimeError(f"All Groq models failed. Last error: {last_err}")
 
 
 def call_llm(prompt: str) -> str:
@@ -745,7 +758,7 @@ def health():
         "groq_ready": bool(GROQ_API_KEY),
         "llm_ready": bool(GROQ_API_KEY or (API_KEY and API_KEY != "YOUR_GEMINI_API_KEY_HERE")),
         "embeddings_ready": embedding_model is not None,
-        "supported_models": ["llama-3.3-70b-versatile (Groq)"] if GROQ_API_KEY else LLM_MODELS
+        "supported_models": [f"{m} (Groq)" for m in GROQ_MODELS] if GROQ_API_KEY else LLM_MODELS
     })
 
 
