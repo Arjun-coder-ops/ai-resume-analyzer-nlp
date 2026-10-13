@@ -28,8 +28,11 @@ try:
 except Exception as e:
     print(f"[WARN] sentence-transformers model not loaded ({e}). Using lexical fallback scoring.")
 
+# Configure Groq API (High-speed Llama-3.3-70B with 14,400 daily requests)
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
+
 # Configure Gemini API
-API_KEY = os.environ.get("GEMINI_API_KEY", "")
+API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 if API_KEY and API_KEY != "YOUR_GEMINI_API_KEY_HERE":
     import google.generativeai as genai
     genai.configure(api_key=API_KEY)
@@ -52,46 +55,90 @@ def is_rate_limit_error(e: Exception) -> bool:
     return "429" in err_str or "quota" in err_str or "resourceexhausted" in err_str or "rate limit" in err_str
 
 
+def call_groq(prompt: str) -> str:
+    """Execute inference via Groq LPU using Llama-3.3-70b-versatile (14,400 requests/day free tier)."""
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY is not configured.")
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an elite ATS recruitment algorithm and structured resume evaluation expert. Respond ONLY with a single valid JSON object strictly adhering to the requested schema without markdown formatting or commentary."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"}
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=25)
+    if resp.status_code == 200:
+        return resp.json()["choices"][0]["message"]["content"]
+    else:
+        raise RuntimeError(f"Groq API error ({resp.status_code}): {resp.text}")
+
+
 def call_llm(prompt: str) -> str:
     """
-    Wrapper to call Gemini API.
-    Always prioritizes gemini-2.5-flash. Fallback models are ONLY accessed
-    when gemini-2.5-flash reaches its rate or daily quota limit.
+    Unified LLM caller:
+    1. If GROQ_API_KEY is configured, uses Groq (Llama-3.3-70B) for ultra-fast, 14,400 req/day processing.
+    2. Falls back to Google Gemini models chain if Groq fails or is not configured.
+    3. Seamlessly falls back to local SentenceTransformers NLP if both external APIs are unavailable.
     """
     global _gemini_cooldown_until
-    if not API_KEY or API_KEY == "YOUR_GEMINI_API_KEY_HERE" or genai is None:
-        raise ValueError("GEMINI_API_KEY is not configured.")
 
-    now = time.time()
-    if now < _gemini_cooldown_until:
-        remaining = int(_gemini_cooldown_until - now)
-        print(f"[INFO] All Gemini models currently in cooldown ({remaining}s remaining). Activating local NLP engine.")
-        raise RuntimeError(f"Gemini API cooldown ({remaining}s remaining). Falling back to offline NLP.")
-
-    last_error = None
-    for model_name in LLM_MODELS:
-        # If this model recently hit a 429 quota limit, skip it until cooldown expires
-        if model_name in _model_cooldowns and now < _model_cooldowns[model_name]:
-            continue
-
+    # ── 1. Groq Cloud Engine (Primary when configured) ─────────────────
+    if GROQ_API_KEY:
         try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            if response and response.text:
-                return response.text
+            print("[LLM] Executing analysis with Groq (Llama-3.3-70b-versatile)...")
+            res = call_groq(prompt)
+            if res and res.strip():
+                return res
         except Exception as e:
-            last_error = e
-            if is_rate_limit_error(e):
-                print(f"[WARN] Gemini model {model_name} quota hit (429). Setting 5m cooldown. Trying next fallback...")
-                _model_cooldowns[model_name] = now + 300.0
-                continue
-            else:
-                print(f"[WARN] Model {model_name} failed: {e}. Trying next fallback...")
+            print(f"[WARN] Groq request failed: {e}. Falling back to Gemini/Local...")
 
-    # If all models in the fallback chain were exhausted or rate limited:
-    print(f"[WARN] All Gemini models failed or rate-limited. Activating 45s circuit breaker cooldown.")
-    _gemini_cooldown_until = time.time() + 45.0
-    raise RuntimeError(f"All Gemini models failed or rate-limited. Last error: {last_error}")
+    # ── 2. Google Gemini Fallback ─────────────────────────────────────
+    if API_KEY and API_KEY != "YOUR_GEMINI_API_KEY_HERE" and genai is not None:
+        now = time.time()
+        if now < _gemini_cooldown_until:
+            remaining = int(_gemini_cooldown_until - now)
+            print(f"[INFO] All Gemini models currently in cooldown ({remaining}s remaining). Activating local NLP engine.")
+            raise RuntimeError(f"Gemini API cooldown ({remaining}s remaining). Falling back to offline NLP.")
+
+        last_error = None
+        for model_name in LLM_MODELS:
+            # If this model recently hit a 429 quota limit, skip it until cooldown expires
+            if model_name in _model_cooldowns and now < _model_cooldowns[model_name]:
+                continue
+
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                if response and response.text:
+                    return response.text
+            except Exception as e:
+                last_error = e
+                if is_rate_limit_error(e):
+                    print(f"[WARN] Gemini model {model_name} quota hit (429). Setting 5m cooldown. Trying next fallback...")
+                    _model_cooldowns[model_name] = now + 300.0
+                    continue
+                else:
+                    print(f"[WARN] Model {model_name} failed: {e}. Trying next fallback...")
+
+        # If all models in the fallback chain were exhausted or rate limited:
+        print(f"[WARN] All Gemini models failed or rate-limited. Activating 45s circuit breaker cooldown.")
+        _gemini_cooldown_until = time.time() + 45.0
+        raise RuntimeError(f"All Gemini models failed or rate-limited. Last error: {last_error}")
+
+    raise RuntimeError("No external LLM provider available. Triggering local NLP fallback.")
 
 
 def clean_and_parse_json(raw_text: str) -> dict:
@@ -695,9 +742,10 @@ def health():
     return jsonify({
         "status": "OK",
         "service": "AI Resume Analyzer",
-        "llm_ready": bool(API_KEY and API_KEY != "YOUR_GEMINI_API_KEY_HERE"),
+        "groq_ready": bool(GROQ_API_KEY),
+        "llm_ready": bool(GROQ_API_KEY or (API_KEY and API_KEY != "YOUR_GEMINI_API_KEY_HERE")),
         "embeddings_ready": embedding_model is not None,
-        "supported_models": LLM_MODELS
+        "supported_models": ["llama-3.3-70b-versatile (Groq)"] if GROQ_API_KEY else LLM_MODELS
     })
 
 

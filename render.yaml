@@ -38,5 +38,7 @@ services:
         value: 10001
       - key: GEMINI_API_KEY
         sync: false
+      - key: GROQ_API_KEY
+        sync: false
       - key: INTERNAL_NLP_TOKEN
         sync: false
