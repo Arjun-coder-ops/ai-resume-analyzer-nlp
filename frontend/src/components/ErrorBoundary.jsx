@@ -1,6 +1,8 @@
 // components/ErrorBoundary.jsx - React Error Boundary to prevent black screen crashes
 import React from 'react'
-import { AlertTriangle, RefreshCw } from 'lucide-react'
+import { TriangleAlert, RotateCcw, RefreshCw } from 'lucide-react'
+import { Button } from './ui/Button'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/Card'
 
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -26,32 +28,39 @@ export default class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="glass-card p-8 text-center animate-fade-in border-red-500/20 bg-red-500/5">
-          <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-4">
-            <AlertTriangle size={24} className="text-red-400" />
+        <Card className="p-8 text-center animate-scale-in border-destructive/20 bg-destructive/5 space-y-4">
+          <div className="w-12 h-12 rounded-[0.375rem] bg-destructive/10 border border-destructive/20 flex items-center justify-center mx-auto text-destructive shadow-well">
+            <TriangleAlert size={22} aria-hidden="true" />
           </div>
-          <h3 className="font-display font-700 text-ink-100 text-lg mb-2">
-            Unable to Display Results View
-          </h3>
-          <p className="text-ink-400 text-sm max-w-md mx-auto mb-6 leading-relaxed">
-            A rendering error occurred while displaying this analysis. Your results are safely stored in your history.
-          </p>
-          <div className="flex items-center justify-center gap-3">
-            <button
+          <div className="space-y-1.5 max-w-md mx-auto">
+            <CardTitle className="text-base text-foreground">
+              Unable to display results view
+            </CardTitle>
+            <CardDescription className="text-xs text-muted-foreground leading-relaxed">
+              A rendering error occurred while displaying this analysis. Your results remain safely saved in your history.
+            </CardDescription>
+          </div>
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <Button
+              variant="primary"
+              size="sm"
               onClick={this.handleReset}
-              className="btn-volt flex items-center gap-2 px-4 py-2 text-sm"
+              className="gap-2"
             >
-              <RefreshCw size={14} />
-              Try Again
-            </button>
-            <button
+              <RotateCcw size={14} aria-hidden="true" />
+              <span>Try again</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => window.location.reload()}
-              className="btn-ghost flex items-center gap-2 px-4 py-2 text-sm"
+              className="gap-2"
             >
-              Refresh Page
-            </button>
+              <RefreshCw size={14} aria-hidden="true" />
+              <span>Refresh page</span>
+            </Button>
           </div>
-        </div>
+        </Card>
       )
     }
 

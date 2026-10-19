@@ -11,6 +11,12 @@ const connectDB = async () => {
   try {
     const conn = await mongoose.connect(process.env.MONGO_URI);
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+
+    // Safely sync unique partial indexes and create quota indexes without dropping unrelated production indexes
+    const { syncAnalysisIndexes } = require('../models/Analysis');
+    const UserDailyQuota = require('../models/UserDailyQuota');
+    await syncAnalysisIndexes();
+    await UserDailyQuota.createIndexes();
   } catch (error) {
     console.error(`❌ MongoDB connection error: ${error.message}`);
     process.exit(1);

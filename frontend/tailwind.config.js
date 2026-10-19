@@ -4,62 +4,107 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['DM Sans', 'sans-serif'],
-        display: ['Syne', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
+        sans: ['Geist', '-apple-system', 'BlinkMacSystemFont', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'sans-serif'],
+        display: ['Geist', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        mono: ['Geist Mono', 'ui-monospace', 'SF Mono', 'Menlo', 'Consolas', 'monospace'],
       },
       colors: {
+        // Interior Design System Semantic Tokens
+        background: 'var(--background)',
+        foreground: 'var(--foreground)',
+        card: {
+          DEFAULT: 'var(--card)',
+          foreground: 'var(--card-foreground)',
+        },
+        popover: {
+          DEFAULT: 'var(--popover)',
+          foreground: 'var(--popover-foreground)',
+        },
+        primary: {
+          DEFAULT: 'var(--primary)',
+          foreground: 'var(--primary-foreground)',
+        },
+        secondary: {
+          DEFAULT: 'var(--secondary)',
+          foreground: 'var(--secondary-foreground)',
+        },
+        muted: {
+          DEFAULT: 'var(--muted)',
+          foreground: 'var(--muted-foreground)',
+        },
+        accent: {
+          DEFAULT: 'var(--accent)',
+          foreground: 'var(--accent-foreground)',
+        },
+        destructive: {
+          DEFAULT: 'var(--destructive)',
+          foreground: 'var(--destructive-foreground)',
+        },
+        success: {
+          DEFAULT: 'var(--success)',
+          foreground: 'var(--success-foreground)',
+        },
+        warning: {
+          DEFAULT: 'var(--warning)',
+          foreground: 'var(--warning-foreground)',
+        },
+        border: 'var(--border)',
+        input: 'var(--input)',
+        ring: 'var(--ring)',
+        chart: {
+          1: 'var(--chart-1)',
+          2: 'var(--chart-2)',
+          3: 'var(--chart-3)',
+          4: 'var(--chart-4)',
+          5: 'var(--chart-5)',
+        },
+        // Legacy palette mappings updated to harmonious warm interior tones
         ink: {
-          50:  '#f0f0f5',
-          100: '#e0e0eb',
-          200: '#c2c2d6',
-          300: '#9494ba',
-          400: '#6666a0',
-          500: '#3d3d7a',
-          600: '#2e2e5e',
-          700: '#1f1f42',
-          800: '#141428',
-          900: '#0a0a14',
+          50:  '#faf9f7',
+          100: '#f4f3f0',
+          200: '#e7e5e1',
+          300: '#a8a29e',
+          400: '#78716c',
+          500: '#57534e',
+          600: '#44403c',
+          700: '#292524',
+          800: '#1c1917',
+          900: '#141211',
         },
         volt: {
-          50:  '#f5ffe0',
-          100: '#e8ffa8',
-          200: '#d4ff6b',
-          300: '#c2ff3d',
-          400: '#b3ff1a',
-          500: '#a0f000',
-          600: '#7ec200',
-          700: '#5e9100',
-          800: '#3e6000',
-          900: '#1f3000',
+          50:  '#f0fdf4',
+          100: '#dcfce7',
+          200: '#bbf7d0',
+          300: '#86efac',
+          400: '#2563eb', // Restrained cobalt accent replacing toxic neon
+          500: '#1d4ed8',
+          600: '#1e40af',
+          700: '#1d4ed8',
+          800: '#1e3a8a',
+          900: '#172554',
         },
-        rose: {
-          neon: '#ff3e6c',
-        }
       },
-      animation: {
-        'fade-up':    'fadeUp 0.5s ease forwards',
-        'fade-in':    'fadeIn 0.4s ease forwards',
-        'slide-in':   'slideIn 0.4s ease forwards',
-        'pulse-slow': 'pulse 3s ease-in-out infinite',
-        'spin-slow':  'spin 3s linear infinite',
-        'shimmer':    'shimmer 1.8s infinite',
-        'count-up':   'countUp 1.5s ease-out forwards',
-        'scale-in':   'scaleIn 0.35s cubic-bezier(0.34,1.56,0.64,1) forwards',
+      borderRadius: {
+        'card': '0.875rem',    // 14px - Interior lifted card
+        'input': '0.625rem',   // 10px - Interior field & well
+        'btn': '0.5625rem',    // 9px  - Interior button
+        'badge': '0.375rem',   // 6px  - Interior chip
+        'cell': '0.3125rem',   // 5px  - Interior table cell
       },
-      keyframes: {
-        fadeUp:   { from: { opacity: 0, transform: 'translateY(20px)' }, to: { opacity: 1, transform: 'translateY(0)' } },
-        fadeIn:   { from: { opacity: 0 }, to: { opacity: 1 } },
-        slideIn:  { from: { opacity: 0, transform: 'translateX(-20px)' }, to: { opacity: 1, transform: 'translateX(0)' } },
-        shimmer:  { '0%': { backgroundPosition: '-200% 0' }, '100%': { backgroundPosition: '200% 0' } },
-        scaleIn:  { from: { opacity: 0, transform: 'scale(0.8)' }, to: { opacity: 1, transform: 'scale(1)' } },
-      },
-      backdropBlur: { xs: '2px' },
       boxShadow: {
-        'volt':    '0 0 30px rgba(160,240,0,0.25), 0 0 60px rgba(160,240,0,0.1)',
-        'volt-sm': '0 0 15px rgba(160,240,0,0.2)',
-        'glass':   '0 8px 32px rgba(0,0,0,0.4)',
-        'card':    '0 2px 16px rgba(0,0,0,0.5)',
+        'lift': '0 0.0625rem 0.125rem oklch(0.2161 0.0061 56.04 / 0.06), 0 0.25rem 0.625rem -0.5rem oklch(0.2161 0.0061 56.04 / 0.45)',
+        'well': 'inset 0 0.0625rem 0.125rem oklch(0.2161 0.0061 56.04 / 0.07)',
+        'cap': '0 0.0938rem 0 oklch(0.2161 0.0061 56.04 / 0.09), inset 0 0 0 0.0625rem oklch(0.2161 0.0061 56.04 / 0.11)',
+        'row': 'inset 0 0 0 0.0625rem oklch(0.2161 0.0061 56.04 / 0.07), 0 0.0625rem 0.125rem oklch(0.2161 0.0061 56.04 / 0.05)',
+        'float-dropdown': '0 1rem 2.25rem -1.125rem oklch(0.2161 0.0061 56.04 / 0.5)',
+        'float-popover': '0 1.125rem 2.5rem -1.5rem oklch(0.2161 0.0061 56.04 / 0.5)',
+        'float-modal': '0 1.75rem 3.5rem -1.5rem oklch(0.2161 0.0061 56.04 / 0.45)',
+        'focus-lift': '0 0.0625rem 0.125rem oklch(0.2161 0.0061 56.04 / 0.08), 0 0.625rem 1.25rem -0.875rem oklch(0.5832 0.227 268.34 / 0.6)',
+        'card': '0 0.0625rem 0.125rem oklch(0.2161 0.0061 56.04 / 0.06), 0 0.25rem 0.625rem -0.5rem oklch(0.2161 0.0061 56.04 / 0.45)',
+      },
+      letterSpacing: {
+        tightest: '-0.03em',
+        tighter: '-0.02em',
       },
     },
   },

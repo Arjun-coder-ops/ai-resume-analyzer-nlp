@@ -1,92 +1,107 @@
-// components/ScoreRing.jsx - Animated circular ATS score gauge with dynamic tiers
+// components/ScoreRing.jsx - Interior Design System Circular Score Gauge
+
 import { useEffect, useState } from 'react'
-
-const getScoreTier = (score, customMatchLevel) => {
-  if (customMatchLevel) {
-    if (score >= 85) return { stroke: '#a0f000', text: 'text-volt-400', label: customMatchLevel, labelColor: 'text-volt-400', glow: 'rgba(160, 240, 0, 0.25)' }
-    if (score >= 70) return { stroke: '#38bdf8', text: 'text-sky-400',  label: customMatchLevel, labelColor: 'text-sky-400',  glow: 'rgba(56, 189, 248, 0.25)' }
-    if (score >= 50) return { stroke: '#f59e0b', text: 'text-amber-400', label: customMatchLevel, labelColor: 'text-amber-400', glow: 'rgba(245, 158, 11, 0.25)' }
-    return { stroke: '#ef4444', text: 'text-red-400', label: customMatchLevel, labelColor: 'text-red-400', glow: 'rgba(239, 68, 68, 0.25)' }
-  }
-
-  if (score >= 85) return { stroke: '#a0f000', text: 'text-volt-400', label: 'Exceptional Match', labelColor: 'text-volt-400', glow: 'rgba(160, 240, 0, 0.25)' }
-  if (score >= 70) return { stroke: '#38bdf8', text: 'text-sky-400',  label: 'Strong Match',      labelColor: 'text-sky-400',  glow: 'rgba(56, 189, 248, 0.25)' }
-  if (score >= 50) return { stroke: '#f59e0b', text: 'text-amber-400', label: 'Good Match',        labelColor: 'text-amber-400', glow: 'rgba(245, 158, 11, 0.25)' }
-  if (score >= 35) return { stroke: '#fb923c', text: 'text-orange-400', label: 'Fair Match',        labelColor: 'text-orange-400', glow: 'rgba(251, 146, 60, 0.25)' }
-  return { stroke: '#ef4444', text: 'text-red-400', label: 'Needs Optimization', labelColor: 'text-red-400', glow: 'rgba(239, 68, 68, 0.25)' }
-}
+import { Badge } from './ui/Badge'
+import { getScoreTier } from '../utils/scoring'
 
 export default function ScoreRing({ score = 0, matchLevel = null }) {
+  // Validate and clamp score safely to 0..100
   const safeScore = Math.min(100, Math.max(0, Math.round(Number(score) || 0)))
   const [displayScore, setDisplayScore] = useState(0)
   const [animated, setAnimated] = useState(false)
 
-  // Circumference of circle r=46: 2 * π * 46 ≈ 289
+  // Circle radius and circumference (r = 46)
   const RADIUS = 46
   const CIRCUMFERENCE = 2 * Math.PI * RADIUS
   const offset = CIRCUMFERENCE - (safeScore / 100) * CIRCUMFERENCE
-  const { stroke, text, label, labelColor, glow } = getScoreTier(safeScore, matchLevel)
+  const { stroke, label, variant } = getScoreTier(safeScore, matchLevel)
 
   useEffect(() => {
     setAnimated(false)
     setDisplayScore(0)
-    const delay = setTimeout(() => {
+
+    const timer = setTimeout(() => {
       setAnimated(true)
-      const duration = 1400
+      const duration = 1200
       const startTime = performance.now()
+
       const step = (now) => {
         const elapsed = now - startTime
         const progress = Math.min(elapsed / duration, 1)
-        const eased = 1 - Math.pow(1 - progress, 3) // ease-out cubic
+        // Smooth ease-out cubic
+        const eased = 1 - Math.pow(1 - progress, 3)
         setDisplayScore(Math.round(eased * safeScore))
         if (progress < 1) requestAnimationFrame(step)
       }
       requestAnimationFrame(step)
-    }, 150)
-    return () => clearTimeout(delay)
+    }, 100)
+
+    return () => clearTimeout(timer)
   }, [safeScore])
 
   return (
-    <div className="flex flex-col items-center gap-3">
-      {/* Ring */}
-      <div className="relative group">
-        <svg width="170" height="170" viewBox="0 0 110 110" className="-rotate-90 drop-shadow-lg">
-          {/* Track background */}
+    <div
+      role="progressbar"
+      aria-valuenow={safeScore}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={`Overall resume ATS match score: ${safeScore} out of 100 (${label})`}
+      className="flex flex-col items-center gap-3 select-none"
+    >
+      {/* Circular Gauge */}
+      <div className="relative">
+        <svg
+          width="160"
+          height="160"
+          viewBox="0 0 110 110"
+          className="-rotate-90"
+          aria-hidden="true"
+        >
+          {/* Subtle track background */}
           <circle
-            cx="55" cy="55" r={RADIUS} fill="none"
-            stroke="rgba(255,255,255,0.06)" strokeWidth="8"
+            cx="55"
+            cy="55"
+            r={RADIUS}
+            fill="none"
+            stroke="oklch(0.9232 0.0026 48.72)"
+            strokeWidth="7"
           />
-          {/* Progress arc */}
+          {/* Animated score arc */}
           <circle
-            cx="55" cy="55" r={RADIUS} fill="none"
-            stroke={stroke} strokeWidth="8"
+            cx="55"
+            cy="55"
+            r={RADIUS}
+            fill="none"
+            stroke={stroke}
+            strokeWidth="7"
             strokeLinecap="round"
             strokeDasharray={CIRCUMFERENCE}
             strokeDashoffset={animated ? offset : CIRCUMFERENCE}
             style={{
-              transition: 'stroke-dashoffset 1.4s cubic-bezier(0.4,0,0.2,1) 0.15s',
-              filter: `drop-shadow(0 0 8px ${glow})`
+              transition: 'stroke-dashoffset 1.2s cubic-bezier(0.165, 0.84, 0.44, 1) 0.1s',
             }}
           />
         </svg>
 
-        {/* Center content */}
+        {/* Numeric score center text */}
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <span className={`font-display font-800 text-4xl leading-none tracking-tight ${text}`}>
+          <span className="font-sans font-bold text-4xl text-foreground leading-none tracking-tight tabular-nums">
             {displayScore}
           </span>
-          <span className="text-ink-500 text-[11px] font-mono mt-1 font-semibold tracking-wider">
-            OUT OF 100
+          <span className="text-[10px] font-mono font-medium text-muted-foreground mt-1 tracking-wider uppercase">
+            Out of 100
           </span>
         </div>
       </div>
 
-      {/* Label */}
+      {/* Semantic Status Badge */}
       <div className="text-center">
-        <span className={`inline-block font-display font-700 text-sm px-3 py-1 rounded-full bg-ink-800/80 border border-ink-700/60 ${labelColor}`}>
+        <Badge variant={variant} className="text-xs px-2.5 py-0.5 font-medium">
           {label}
-        </span>
-        <p className="text-ink-500 text-xs mt-1.5 font-medium tracking-wide">Industry ATS Score</p>
+        </Badge>
+        <p className="text-[11px] text-muted-foreground font-mono mt-1">
+          Compatibility index
+        </p>
       </div>
     </div>
   )

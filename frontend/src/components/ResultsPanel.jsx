@@ -1,12 +1,16 @@
-// components/ResultsPanel.jsx - Industry-Standard ATS Resume Analysis Dashboard
+// components/ResultsPanel.jsx - Interior Design System Results Presentation
+
 import { useState } from 'react'
 import {
-  CheckCircle2, XCircle, Lightbulb, Briefcase, FileText, Clock,
-  User, Mail, Phone, MapPin, Globe, Linkedin, Github, Award,
-  BookOpen, Layers, ExternalLink, Languages, Sparkles, Check,
-  AlertTriangle, Target, Gauge, Zap, ChevronDown, ChevronUp, ShieldCheck
+  CheckCircle2, CircleAlert, TriangleAlert, Lightbulb, BriefcaseBusiness,
+  FileText, Clock, UserRound, Mail, Phone, MapPin, Globe, Linkedin,
+  Github, Award, GraduationCap, FolderGit2, ExternalLink, Languages,
+  Trophy, Check, Tags, ShieldCheck, X
 } from 'lucide-react'
 import ScoreRing from './ScoreRing'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/Card'
+import { Badge } from './ui/Badge'
+import { getMatchLevel, getScoreVariant } from '../utils/scoring'
 
 // ── Defensive helper to validate external URLs ────────────────
 function safeUrl(val) {
@@ -29,12 +33,48 @@ function safeText(val) {
 }
 
 export default function ResultsPanel({ data = {} }) {
-  const [activeRecTab, setActiveRecTab] = useState('all') // 'all' | 'keywords' | 'impact' | 'verbs' | 'compliance'
+  const [activeRecTab, setActiveRecTab] = useState('all')
 
   const score = Math.round(Number(data.score) || 0)
-  const matchLevel = data.matchLevel || (score >= 85 ? 'Exceptional Match' : score >= 70 ? 'Strong Match' : score >= 50 ? 'Good Match' : 'Needs Optimization')
+  const matchLevel = data.matchLevel || getMatchLevel(score)
+
   const scoringBreakdown = data.scoringBreakdown || {}
   const recommendations = data.recommendations || {}
+
+  // Education & Mandatory Qualification Evidence
+  const eduEvidence = scoringBreakdown.education_credentials?.evidence || {}
+  const missingMandatoryCreds = Array.isArray(eduEvidence.mandatory_credentials_missing)
+    ? eduEvidence.mandatory_credentials_missing
+    : []
+  const missingMandatoryDegree = Boolean(eduEvidence.missing_mandatory_degree)
+  const structuredWarnings = Array.isArray(eduEvidence.structured_warnings)
+    ? eduEvidence.structured_warnings
+    : []
+  const qualificationWarnings = Array.isArray(eduEvidence.warnings)
+    ? eduEvidence.warnings
+    : []
+  const mandatoryCredsRequired = Array.isArray(eduEvidence.mandatory_credentials_required)
+    ? eduEvidence.mandatory_credentials_required
+    : []
+  const mandatoryCredsMatched = Array.isArray(eduEvidence.mandatory_credentials_matched)
+    ? eduEvidence.mandatory_credentials_matched
+    : []
+  const preferredCredsRequired = Array.isArray(eduEvidence.preferred_credentials_required)
+    ? eduEvidence.preferred_credentials_required
+    : []
+  const preferredCredsMatched = Array.isArray(eduEvidence.preferred_credentials_matched)
+    ? eduEvidence.preferred_credentials_matched
+    : []
+
+  const hasMandatoryGap =
+    missingMandatoryCreds.length > 0 ||
+    missingMandatoryDegree ||
+    structuredWarnings.some(
+      (w) =>
+        w.type === 'missing_mandatory_credential' ||
+        w.type === 'missing_mandatory_degree' ||
+        w.type === 'in_progress_degree_for_completed_role'
+    )
 
   const matchedSkills = Array.isArray(data.matchedSkills) ? data.matchedSkills : []
   const missingSkills = Array.isArray(data.missingSkills) ? data.missingSkills : []
@@ -43,21 +83,35 @@ export default function ResultsPanel({ data = {} }) {
 
   const candidateInfo = data.candidateInfo || {}
   const summary = safeText(data.summary)
-  const experience = Array.isArray(data.experience) ? data.experience : (typeof data.experience === 'string' ? [data.experience] : [])
-  const education = Array.isArray(data.education) ? data.education : (typeof data.education === 'string' ? [data.education] : [])
+  const experience = Array.isArray(data.experience)
+    ? data.experience
+    : typeof data.experience === 'string'
+    ? [data.experience]
+    : []
+  const education = Array.isArray(data.education)
+    ? data.education
+    : typeof data.education === 'string'
+    ? [data.education]
+    : []
   const projects = Array.isArray(data.projects) ? data.projects : []
   const certifications = Array.isArray(data.certifications) ? data.certifications : []
   const languages = Array.isArray(data.languages) ? data.languages : []
   const achievements = Array.isArray(data.achievements) ? data.achievements : []
 
   const jobTitle = safeText(data.jobTitle) || 'Position Analysis'
-  const resumeName = safeText(data.resumeOriginalName) || safeText(data.resumeName) || 'Resume.pdf'
+  const resumeName =
+    safeText(data.resumeOriginalName) || safeText(data.resumeName) || 'Resume.pdf'
   const createdAt = data.createdAt
 
   const formatDate = (d) => {
     if (!d) return ''
     try {
-      return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      return new Date(d).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
     } catch {
       return ''
     }
@@ -77,506 +131,618 @@ export default function ResultsPanel({ data = {} }) {
     candidateLinkedin || candidateGithub || candidatePortfolio
   )
 
-  // ── 5-Pillar Industry Scoring Breakdown Defaults ───────────
+  // ── 5-Pillar Weighted Scoring Breakdown ────────────────────
   const pillars = [
     {
       key: 'skills_match',
       name: 'Skills & Keywords Match',
       weight: '40% weight',
-      icon: <Target size={15} className="text-volt-400" />,
-      score: scoringBreakdown.skills_match?.score ?? (missingSkills.length === 0 ? 40 : Math.round((matchedSkills.length / Math.max(1, matchedSkills.length + missingSkills.length)) * 40)),
+      icon: <Tags size={14} className="text-foreground" aria-hidden="true" />,
+      score:
+        scoringBreakdown.skills_match?.score ??
+        (missingSkills.length === 0 && matchedSkills.length > 0
+          ? 40
+          : Math.round(
+              (matchedSkills.length /
+                Math.max(1, matchedSkills.length + missingSkills.length)) *
+                40
+            )),
       max: 40,
       status: scoringBreakdown.skills_match?.status || (missingSkills.length === 0 ? '100% Match' : 'Aligned'),
-      barColor: 'bg-volt-400',
+      explanation: scoringBreakdown.skills_match?.explanation,
+      barColor: 'bg-primary',
     },
     {
       key: 'experience_alignment',
       name: 'Experience & Responsibilities',
       weight: '25% weight',
-      icon: <Briefcase size={15} className="text-sky-400" />,
-      score: scoringBreakdown.experience_alignment?.score ?? 21,
+      icon: <BriefcaseBusiness size={14} className="text-foreground" aria-hidden="true" />,
+      score: scoringBreakdown.experience_alignment?.score ?? 0,
       max: 25,
-      status: scoringBreakdown.experience_alignment?.status || 'Strong Relevance',
-      barColor: 'bg-sky-400',
+      status: scoringBreakdown.experience_alignment?.status || 'Needs Evaluation',
+      explanation: scoringBreakdown.experience_alignment?.explanation,
+      barColor: 'bg-primary/80',
     },
     {
       key: 'education_credentials',
       name: 'Education & Credentials',
       weight: '15% weight',
-      icon: <BookOpen size={15} className="text-indigo-400" />,
-      score: scoringBreakdown.education_credentials?.score ?? 13,
+      icon: <GraduationCap size={14} className="text-foreground" aria-hidden="true" />,
+      score: scoringBreakdown.education_credentials?.score ?? 0,
       max: 15,
-      status: scoringBreakdown.education_credentials?.status || 'Verified Degree',
-      barColor: 'bg-indigo-400',
+      status: scoringBreakdown.education_credentials?.status || 'Needs Evaluation',
+      explanation: scoringBreakdown.education_credentials?.explanation,
+      barColor: 'bg-primary/70',
     },
     {
       key: 'content_impact',
       name: 'Measurable Impact & Metrics',
       weight: '10% weight',
-      icon: <Zap size={15} className="text-amber-400" />,
-      score: scoringBreakdown.content_impact?.score ?? 10,
+      icon: <Trophy size={14} className="text-foreground" aria-hidden="true" />,
+      score: scoringBreakdown.content_impact?.score ?? 0,
       max: 10,
-      status: scoringBreakdown.content_impact?.status || 'High Impact',
-      barColor: 'bg-amber-400',
+      status: scoringBreakdown.content_impact?.status || 'Needs Evaluation',
+      explanation: scoringBreakdown.content_impact?.explanation,
+      barColor: 'bg-primary/60',
     },
     {
       key: 'ats_parseability',
       name: 'ATS Formatting & Parseability',
       weight: '10% weight',
-      icon: <ShieldCheck size={15} className="text-emerald-400" />,
-      score: scoringBreakdown.ats_parseability?.score ?? 10,
+      icon: <FileText size={14} className="text-foreground" aria-hidden="true" />,
+      score: scoringBreakdown.ats_parseability?.score ?? 0,
       max: 10,
-      status: scoringBreakdown.ats_parseability?.status || 'Passed 100%',
-      barColor: 'bg-emerald-400',
+      status: scoringBreakdown.ats_parseability?.status || 'Needs Evaluation',
+      explanation: scoringBreakdown.ats_parseability?.explanation,
+      barColor: 'bg-primary/50',
     },
   ]
 
   // Categorized recommendations extraction
-  const recKeywords = Array.isArray(recommendations.keyword_placement) ? recommendations.keyword_placement : []
-  const recImpact = Array.isArray(recommendations.quantifiable_impact) ? recommendations.quantifiable_impact : []
-  const recVerbs = Array.isArray(recommendations.action_verbs) ? recommendations.action_verbs : []
-  const recCompliance = Array.isArray(recommendations.ats_compliance) ? recommendations.ats_compliance : []
+  const recKeywords = Array.isArray(recommendations.keyword_placement)
+    ? recommendations.keyword_placement
+    : []
+  const recImpact = Array.isArray(recommendations.quantifiable_impact)
+    ? recommendations.quantifiable_impact
+    : []
+  const recVerbs = Array.isArray(recommendations.action_verbs)
+    ? recommendations.action_verbs
+    : []
+  const recCompliance = Array.isArray(recommendations.ats_compliance)
+    ? recommendations.ats_compliance
+    : []
 
   return (
-    <div className="space-y-6 animate-fade-up">
+    <div className="space-y-6 animate-scale-in">
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* 1. AUDIT HEADER & DOCUMENT CONTEXT                     */}
+      {/* ══════════════════════════════════════════════════════ */}
+      <Card className="shadow-lift border border-border/90">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                <Badge variant="secondary" className="font-mono text-[11px]">
+                  Evaluation complete
+                </Badge>
+                {candidateName && (
+                  <Badge variant="outline" className="text-xs gap-1.5">
+                    <UserRound size={11} aria-hidden="true" />
+                    <span>{candidateName}</span>
+                  </Badge>
+                )}
+              </div>
+              <h2 className="font-sans font-semibold text-xl sm:text-2xl text-foreground tracking-tight">
+                {jobTitle}
+              </h2>
+            </div>
 
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* 1. HERO BANNER: Candidate & Scan Summary               */}
-      {/* ══════════════════════════════════════════════════════ */}
-      <div className="glass-card p-6 border-volt-400/20 bg-gradient-to-r from-ink-900/90 via-ink-900/60 to-ink-900/90">
-        <div className="flex items-start justify-between flex-wrap gap-4 mb-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="section-label">ATS Audit Completed</span>
-              {candidateName && (
-                <span className="text-xs font-semibold text-volt-400 bg-volt-400/10 px-2.5 py-0.5 rounded-full flex items-center gap-1.5 border border-volt-400/20">
-                  <User size={12} /> {candidateName}
+            <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono shrink-0">
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-badge bg-secondary border border-border/60">
+                <FileText size={13} className="text-foreground" aria-hidden="true" />
+                <span className="truncate max-w-[12rem]">{resumeName}</span>
+              </span>
+              {createdAt && (
+                <span className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-badge bg-secondary border border-border/60">
+                  <Clock size={13} aria-hidden="true" />
+                  <span>{formatDate(createdAt)}</span>
                 </span>
               )}
             </div>
-            <h2 className="font-display font-700 text-ink-50 text-2xl tracking-tight">{jobTitle}</h2>
           </div>
+        </CardHeader>
 
-          <div className="flex items-center gap-3 text-xs text-ink-400">
-            <span className="flex items-center gap-1.5 bg-ink-800/80 px-2.5 py-1 rounded-md border border-ink-700/50">
-              <FileText size={13} className="text-volt-400" /> {resumeName}
-            </span>
-            {createdAt && (
-              <span className="flex items-center gap-1.5 bg-ink-800/80 px-2.5 py-1 rounded-md border border-ink-700/50">
-                <Clock size={13} className="text-ink-400" /> {formatDate(createdAt)}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Contact info bar */}
+        {/* Candidate Contact Bar */}
         {hasContact && (
-          <div className="pt-3.5 border-t border-ink-800/90 flex flex-wrap items-center gap-y-2.5 gap-x-6 text-xs text-ink-300">
-            {candidateEmail && (
-              <a href={`mailto:${candidateEmail}`} className="flex items-center gap-1.5 hover:text-volt-400 transition-colors">
-                <Mail size={13} className="text-volt-400" />
-                <span>{candidateEmail}</span>
-              </a>
-            )}
-            {candidatePhone && (
-              <a href={`tel:${candidatePhone}`} className="flex items-center gap-1.5 hover:text-volt-400 transition-colors">
-                <Phone size={13} className="text-volt-400" />
-                <span>{candidatePhone}</span>
-              </a>
-            )}
-            {candidateLocation && (
-              <span className="flex items-center gap-1.5 text-ink-400">
-                <MapPin size={13} className="text-ink-500" />
-                <span>{candidateLocation}</span>
-              </span>
-            )}
-            {candidateLinkedin && (
-              <a href={candidateLinkedin} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 hover:text-sky-400 transition-colors">
-                <Linkedin size={13} className="text-sky-400" />
-                <span className="font-medium">LinkedIn Profile</span>
-                <ExternalLink size={10} />
-              </a>
-            )}
-            {candidateGithub && (
-              <a href={candidateGithub} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 hover:text-ink-100 transition-colors">
-                <Github size={13} className="text-ink-300" />
-                <span className="font-medium">GitHub Profile</span>
-                <ExternalLink size={10} />
-              </a>
-            )}
-            {candidatePortfolio && (
-              <a href={candidatePortfolio} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 hover:text-volt-400 transition-colors">
-                <Globe size={13} className="text-volt-400" />
-                <span className="font-medium">Portfolio</span>
-                <ExternalLink size={10} />
-              </a>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* 2. OVERALL ATS SCORE & 5-PILLAR BREAKDOWN CARD        */}
-      {/* ══════════════════════════════════════════════════════ */}
-      <div className="glass-card p-6">
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
-          <div>
-            <h3 className="font-display font-700 text-ink-100 text-lg flex items-center gap-2">
-              <Gauge size={18} className="text-volt-400" />
-              Industry ATS Compatibility Scorecard
-            </h3>
-            <p className="text-ink-400 text-xs mt-0.5">
-              Multi-pillar weighted scoring based on Jobscan, Workday, and Lever resume parsing standards
-            </p>
-          </div>
-          <span className="text-xs font-mono px-3 py-1 rounded-full bg-volt-400/10 text-volt-400 border border-volt-400/20 font-semibold">
-            {matchLevel}
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
-          {/* Main gauge */}
-          <div className="md:col-span-4 flex flex-col items-center justify-center p-4 bg-ink-900/60 rounded-2xl border border-ink-800/60">
-            <ScoreRing score={score} matchLevel={matchLevel} />
-          </div>
-
-          {/* 5-pillar progress bars */}
-          <div className="md:col-span-8 space-y-3.5">
-            {pillars.map((pillar) => {
-              const pct = Math.min(100, Math.round((pillar.score / pillar.max) * 100))
-              return (
-                <div key={pillar.key} className="p-3 rounded-xl bg-ink-800/40 border border-ink-700/40 hover:border-ink-600/60 transition-colors">
-                  <div className="flex items-center justify-between text-xs mb-1.5">
-                    <span className="font-display font-600 text-ink-200 flex items-center gap-1.5">
-                      {pillar.icon}
-                      {pillar.name}
-                      <span className="text-[10px] text-ink-500 font-mono">({pillar.weight})</span>
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-ink-400 font-medium">{pillar.status}</span>
-                      <span className="font-mono font-bold text-ink-100">
-                        {pillar.score}/{pillar.max} <span className="text-ink-500 font-normal">({pct}%)</span>
-                      </span>
-                    </div>
-                  </div>
-                  {/* Progress bar */}
-                  <div className="w-full bg-ink-900/80 rounded-full h-2 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-1000 ${pillar.barColor}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Quick Stat Highlights */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 mt-6 pt-6 border-t border-ink-800/80">
-          <StatBadge
-            icon={<CheckCircle2 size={16} className="text-volt-400" />}
-            value={matchedSkills.length}
-            label="Matched Skills"
-            sub="Found in JD"
-            color="volt"
-          />
-          <StatBadge
-            icon={<XCircle size={16} className={missingSkills.length === 0 ? "text-volt-400" : "text-red-400"} />}
-            value={missingSkills.length}
-            label="Missing Skills"
-            sub={missingSkills.length === 0 ? "Perfect 100%" : "Recommended to add"}
-            color={missingSkills.length === 0 ? "volt" : "red"}
-          />
-          <StatBadge
-            icon={<Layers size={16} className="text-sky-400" />}
-            value={extractedSkills.length || matchedSkills.length}
-            label="Total Skills"
-            sub="Extracted in resume"
-            color="sky"
-          />
-          <StatBadge
-            icon={<ShieldCheck size={16} className="text-emerald-400" />}
-            value="100%"
-            label="ATS Readability"
-            sub="No parsing blockers"
-            color="emerald"
-          />
-        </div>
-      </div>
-
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* 3. ATS PARSING HEALTH AUDIT (Compliance Checklist)     */}
-      {/* ══════════════════════════════════════════════════════ */}
-      <div className="glass-card p-5 border-emerald-500/10">
-        <div className="flex items-center gap-2 mb-3">
-          <ShieldCheck size={17} className="text-emerald-400" />
-          <h4 className="font-display font-600 text-ink-100 text-sm">ATS Format & Parseability Health Audit</h4>
-          <span className="ml-auto text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-            5 / 5 Passed
-          </span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
-          <AuditItem passed={true} label="Standard Section Headings" detail="Experience, Education, Skills detected" />
-          <AuditItem passed={Boolean(candidateEmail && candidatePhone)} label="Complete Contact Info" detail="Email, Phone, and links accessible" />
-          <AuditItem passed={true} label="Text Extraction Layer" detail="Clean digital text, zero rasterized scans" />
-          <AuditItem passed={true} label="Single-Column Parse Flow" detail="No multi-column reading flow errors" />
-          <AuditItem passed={true} label="Quantifiable Metrics Detected" detail="Percentages, scale, and numbers found" />
-          <AuditItem passed={missingSkills.length === 0} label="Keyword Density Alignment" detail={missingSkills.length === 0 ? "Zero critical skill gaps" : `${missingSkills.length} skills missing`} />
-        </div>
-      </div>
-
-      {/* ══════════════════════════════════════════════════════ */}
-      {/* 4. SKILLS COMPARISON MATRIX (Matched vs Missing)       */}
-      {/* ══════════════════════════════════════════════════════ */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-        {/* Matched Skills */}
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 size={16} className="text-volt-400" />
-              <h4 className="font-display font-600 text-ink-100 text-sm">Matched Job Skills</h4>
-            </div>
-            <span className="text-xs font-mono text-volt-400 bg-volt-400/10 border border-volt-400/20 px-2.5 py-0.5 rounded-full font-bold">
-              {matchedSkills.length} Matched
-            </span>
-          </div>
-
-          {matchedSkills.length === 0 ? (
-            <p className="text-ink-500 text-sm">No direct skill matches detected.</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5 max-h-64 overflow-y-auto pr-1">
-              {matchedSkills.map((skill, i) => (
-                <span
-                  key={i}
-                  className="badge-matched inline-flex items-center gap-1.5 text-xs py-1 px-2.5 animate-scale-in"
-                  style={{ animationDelay: `${i * 0.02}s` }}
+          <CardContent className="pt-2">
+            <div className="pt-3 border-t border-border/70 flex flex-wrap items-center gap-y-2 gap-x-5 text-xs text-muted-foreground">
+              {candidateEmail && (
+                <a
+                  href={`mailto:${candidateEmail}`}
+                  className="flex items-center gap-1.5 text-foreground hover:underline"
                 >
-                  <Check size={11} className="text-volt-400" />
-                  {safeText(skill)}
+                  <Mail size={13} aria-hidden="true" />
+                  <span>{candidateEmail}</span>
+                </a>
+              )}
+              {candidatePhone && (
+                <a
+                  href={`tel:${candidatePhone}`}
+                  className="flex items-center gap-1.5 text-foreground hover:underline"
+                >
+                  <Phone size={13} aria-hidden="true" />
+                  <span>{candidatePhone}</span>
+                </a>
+              )}
+              {candidateLocation && (
+                <span className="flex items-center gap-1.5">
+                  <MapPin size={13} aria-hidden="true" />
+                  <span>{candidateLocation}</span>
                 </span>
-              ))}
+              )}
+              {candidateLinkedin && (
+                <a
+                  href={candidateLinkedin}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1 text-foreground hover:underline"
+                >
+                  <Linkedin size={13} aria-hidden="true" />
+                  <span>LinkedIn</span>
+                  <ExternalLink size={10} aria-hidden="true" />
+                </a>
+              )}
+              {candidateGithub && (
+                <a
+                  href={candidateGithub}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1 text-foreground hover:underline"
+                >
+                  <Github size={13} aria-hidden="true" />
+                  <span>GitHub</span>
+                  <ExternalLink size={10} aria-hidden="true" />
+                </a>
+              )}
+              {candidatePortfolio && (
+                <a
+                  href={candidatePortfolio}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1 text-foreground hover:underline"
+                >
+                  <Globe size={13} aria-hidden="true" />
+                  <span>Portfolio</span>
+                  <ExternalLink size={10} aria-hidden="true" />
+                </a>
+              )}
             </div>
-          )}
-        </div>
+          </CardContent>
+        )}
+      </Card>
 
-        {/* Missing Skills */}
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between mb-4">
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* 2. OVERALL ATS SCORECARD & 5-PILLAR BREAKDOWN          */}
+      {/* ══════════════════════════════════════════════════════ */}
+      <Card className="shadow-lift">
+        <CardHeader>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <CardTitle className="text-lg">ATS compatibility scorecard</CardTitle>
+              <CardDescription>
+                Weighted evaluation across key screening criteria used by applicant tracking systems.
+              </CardDescription>
+            </div>
             <div className="flex items-center gap-2">
-              <XCircle size={16} className={missingSkills.length === 0 ? "text-volt-400" : "text-red-400"} />
-              <h4 className="font-display font-600 text-ink-100 text-sm">Missing Target Skills</h4>
+              {hasMandatoryGap && (
+                <Badge variant="destructive" className="gap-1 animate-pulse font-mono text-[11px]">
+                  <TriangleAlert size={12} aria-hidden="true" />
+                  <span>Mandatory Gap Detected</span>
+                </Badge>
+              )}
+              <Badge variant={getScoreVariant(score)}>
+                {matchLevel}
+              </Badge>
             </div>
-            <span className={`text-xs font-mono px-2.5 py-0.5 rounded-full font-bold border ${
-              missingSkills.length === 0
-                ? "text-volt-400 bg-volt-400/10 border-volt-400/20"
-                : "text-red-400 bg-red-400/10 border-red-400/20"
-            }`}>
-              {missingSkills.length} Missing
-            </span>
           </div>
+        </CardHeader>
 
-          {missingSkills.length === 0 ? (
-            <div className="p-4 rounded-xl bg-volt-400/5 border border-volt-400/20 text-center animate-scale-in">
-              <CheckCircle2 size={24} className="text-volt-400 mx-auto mb-2" />
-              <p className="text-volt-400 text-sm font-semibold">Outstanding Alignment!</p>
-              <p className="text-ink-400 text-xs mt-1">
-                Your resume satisfies 100% of the target job keywords and technical requirements.
+        <CardContent className="space-y-6">
+          {/* Mandatory Qualification Notice */}
+          {hasMandatoryGap && (
+            <div className="p-4 rounded-badge bg-destructive/10 border border-destructive/30 space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2 text-destructive font-semibold text-sm">
+                  <TriangleAlert size={16} aria-hidden="true" />
+                  <span>Mandatory Qualification Notice</span>
+                </div>
+                <Badge variant="outline" className="text-[10px] font-mono border-destructive/40 text-destructive">
+                  Critical Verification Item
+                </Badge>
+              </div>
+
+              <div className="space-y-2">
+                {structuredWarnings.map((warn, i) => (
+                  <div key={i} className="p-3 rounded-cell bg-card/80 border border-border/80 text-xs space-y-1">
+                    <div className="font-semibold text-foreground flex items-center justify-between">
+                      <span>{warn.requirement || 'Required Qualification'}</span>
+                      <Badge variant="destructive" className="text-[10px] py-0 px-1.5 font-mono">
+                        Unverified in Document
+                      </Badge>
+                    </div>
+                    <p className="text-muted-foreground">
+                      <strong className="text-foreground font-medium">Detected Requirement: </strong>
+                      {warn.detected_requirement}
+                    </p>
+                    <p className="text-muted-foreground">
+                      <strong className="text-foreground font-medium">Resume Evidence: </strong>
+                      {warn.resume_evidence}
+                    </p>
+                  </div>
+                ))}
+                {structuredWarnings.length === 0 && qualificationWarnings.map((msg, i) => (
+                  <div key={i} className="p-2.5 rounded-cell bg-card/80 border border-border/80 text-xs text-foreground">
+                    {msg}
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-[11px] text-muted-foreground leading-relaxed italic border-t border-destructive/20 pt-2">
+                Note: Qualification verification is based on automated text parsing. Absence of a keyword in the submitted resume indicates a missing text match, not an automated disqualification. Please verify credentials directly with the applicant.
               </p>
             </div>
-          ) : (
-            <div className="flex flex-wrap gap-1.5 max-h-64 overflow-y-auto pr-1">
-              {missingSkills.map((skill, i) => (
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+            {/* Score Ring Gauge inside Recessed Well */}
+            <div className="md:col-span-5 flex flex-col items-center justify-center p-6 rounded-card bg-secondary/50 border border-border shadow-well">
+              <ScoreRing score={score} matchLevel={matchLevel} />
+            </div>
+
+            {/* 5-Pillar Breakdown Bars */}
+            <div className="md:col-span-7 space-y-3">
+              {pillars.map((pillar) => {
+                const pct = Math.min(100, Math.round((pillar.score / pillar.max) * 100))
+                return (
+                  <div
+                    key={pillar.key}
+                    className="p-3 rounded-badge bg-secondary/40 border border-border/70 space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-foreground flex items-center gap-1.5">
+                        {pillar.icon}
+                        <span>{pillar.name}</span>
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          ({pillar.weight})
+                        </span>
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">{pillar.status}</span>
+                        <span className="font-mono font-semibold text-foreground tabular-nums">
+                          {pillar.score}/{pillar.max}
+                        </span>
+                      </div>
+                    </div>
+                    {/* Clean Progress Rail */}
+                    <div className="w-full bg-border/60 rounded-cell h-1.5 overflow-hidden">
+                      <div
+                        className={`h-full rounded-cell transition-all duration-700 ${pillar.barColor}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    {pillar.explanation && (
+                      <p className="text-[11px] text-muted-foreground leading-relaxed pt-0.5">
+                        {pillar.explanation}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Quick Metrics Summary */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-border/70">
+            <MetricTile
+              label="Matched skills"
+              value={matchedSkills.length}
+              sub="Direct requirement match"
+              badge="Aligned"
+            />
+            <MetricTile
+              label="Missing skills"
+              value={missingSkills.length}
+              sub={missingSkills.length === 0 ? 'Zero gaps found' : 'Recommended additions'}
+              badge={missingSkills.length === 0 ? 'Optimal' : 'Action needed'}
+              highlight={missingSkills.length > 0}
+            />
+            <MetricTile
+              label="Cataloged skills"
+              value={extractedSkills.length || matchedSkills.length}
+              sub="Total identified in resume"
+              badge="Parsed"
+            />
+            <MetricTile
+              label="Formatting status"
+              value="Standard"
+              sub="Single-column clean PDF"
+              badge="Passed"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* 3. SKILLS MATRIX: MATCHED VS. MISSING                  */}
+      {/* ══════════════════════════════════════════════════════ */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Matched Skills */}
+        <Card className="shadow-lift">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={16} className="text-foreground" aria-hidden="true" />
+                <CardTitle className="text-base">Matched skills</CardTitle>
+              </div>
+              <Badge variant="success" className="font-mono tabular-nums">
+                {matchedSkills.length} matched
+              </Badge>
+            </div>
+            <CardDescription>
+              Skills and technical keywords verified in both your resume and the job description.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {matchedSkills.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No direct skills matched yet.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5 max-h-60 overflow-y-auto pr-1">
+                {matchedSkills.map((skill, i) => (
+                  <Badge key={i} variant="secondary" className="text-xs gap-1 border-border/80">
+                    <CheckCircle2 size={11} className="text-foreground shrink-0" aria-hidden="true" />
+                    <span>{safeText(skill)}</span>
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Missing Target Skills */}
+        <Card className="shadow-lift">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TriangleAlert size={16} className="text-foreground" aria-hidden="true" />
+                <CardTitle className="text-base">Skills to develop</CardTitle>
+              </div>
+              <Badge
+                variant={missingSkills.length === 0 ? 'success' : 'destructive'}
+                className="font-mono tabular-nums"
+              >
+                {missingSkills.length} missing
+              </Badge>
+            </div>
+            <CardDescription>
+              Target qualifications mentioned in the job description that were not detected in your resume.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {missingSkills.length === 0 ? (
+              <div className="p-4 rounded-badge bg-secondary/50 border border-border text-center space-y-1">
+                <p className="text-sm font-medium text-foreground">Complete keyword alignment</p>
+                <p className="text-xs text-muted-foreground leading-normal">
+                  Your resume covers all primary technical requirements mentioned in this job post.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5 max-h-60 overflow-y-auto pr-1">
+                {missingSkills.map((skill, i) => (
+                  <Badge key={i} variant="destructive" className="text-xs gap-1">
+                    <CircleAlert size={11} className="shrink-0" aria-hidden="true" />
+                    <span>{safeText(skill)}</span>
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* All Extracted Skills Catalog */}
+      {extractedSkills.length > 0 && (
+        <Card className="shadow-lift">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Tags size={16} className="text-foreground" aria-hidden="true" />
+                <CardTitle className="text-base">All extracted resume skills</CardTitle>
+              </div>
+              <span className="text-xs font-mono text-muted-foreground">
+                {extractedSkills.length} total
+              </span>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-1.5">
+              {extractedSkills.map((s, i) => (
                 <span
                   key={i}
-                  className="badge-missing inline-flex items-center gap-1.5 text-xs py-1 px-2.5 animate-scale-in"
-                  style={{ animationDelay: `${i * 0.02}s` }}
+                  className="px-2.5 py-1 rounded-badge text-xs font-medium bg-secondary text-foreground border border-border/70"
                 >
-                  <XCircle size={11} className="text-red-400" />
-                  {safeText(skill)}
+                  {safeText(s)}
                 </span>
               ))}
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* Extracted Skills Catalog */}
-      {extractedSkills.length > 0 && (
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Layers size={16} className="text-sky-400" />
-              <h4 className="font-display font-600 text-ink-100 text-sm">All Identified Resume Skills</h4>
-            </div>
-            <span className="text-xs font-mono text-ink-400 bg-ink-800 px-2 py-0.5 rounded-full border border-ink-700/60">
-              {extractedSkills.length} cataloged
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {extractedSkills.map((skill, i) => (
-              <span
-                key={i}
-                className="text-xs bg-ink-800/80 hover:bg-ink-700 text-ink-200 border border-ink-700/60 px-2.5 py-1 rounded-lg transition-colors"
-              >
-                {safeText(skill)}
-              </span>
-            ))}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* ══════════════════════════════════════════════════════ */}
-      {/* 5. CATEGORIZED ATS OPTIMIZATION RECOMMENDATIONS       */}
+      {/* 4. ACTIONABLE OPTIMIZATION RECOMMENDATIONS            */}
       {/* ══════════════════════════════════════════════════════ */}
-      <div className="glass-card p-6 border-amber-400/20">
-        <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
-          <div className="flex items-center gap-2">
-            <Lightbulb size={18} className="text-amber-400" />
-            <h4 className="font-display font-700 text-ink-100 text-base">ATS Optimization Recommendations</h4>
+      <Card className="shadow-lift">
+        <CardHeader>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Lightbulb size={18} className="text-foreground" aria-hidden="true" />
+              <CardTitle className="text-lg">Improvement recommendations</CardTitle>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              Concrete guidance to strengthen ATS match rate
+            </span>
           </div>
-          <span className="text-xs text-ink-400">
-            Actionable guidance to pass automated candidate screening
-          </span>
-        </div>
 
-        {/* Tab Filters */}
-        <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1 text-xs">
-          {[
-            { id: 'all', label: 'All Recommendations' },
-            { id: 'keywords', label: 'Keyword Placement' },
-            { id: 'impact', label: 'Quantifiable Metrics' },
-            { id: 'verbs', label: 'Power Verbs' },
-            { id: 'compliance', label: 'ATS Compliance' },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveRecTab(tab.id)}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap ${
-                activeRecTab === tab.id
-                  ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
-                  : 'bg-ink-800/60 text-ink-400 border border-ink-700/40 hover:text-ink-200'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+          {/* Filter tabs */}
+          <div className="flex items-center gap-1.5 pt-3 overflow-x-auto pb-1 text-xs">
+            {[
+              { id: 'all', label: 'All recommendations' },
+              { id: 'keywords', label: 'Keyword placement' },
+              { id: 'impact', label: 'Measurable metrics' },
+              { id: 'verbs', label: 'Action verbs' },
+              { id: 'compliance', label: 'Formatting standards' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveRecTab(tab.id)}
+                className={`px-3 py-1.5 rounded-badge text-xs font-medium transition-colors whitespace-nowrap ${
+                  activeRecTab === tab.id
+                    ? 'bg-primary text-primary-foreground shadow-cap'
+                    : 'bg-secondary text-muted-foreground hover:text-foreground border border-border/60'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </CardHeader>
 
-        {/* Categorized Cards */}
-        <div className="space-y-3">
-          {/* Keywords */}
-          {(activeRecTab === 'all' || activeRecTab === 'keywords') && recKeywords.map((tip, i) => (
-            <RecommendationItem
-              key={`kw-${i}`}
-              badge="Keyword Strategy"
-              color="volt"
-              content={safeText(tip)}
-            />
-          ))}
+        <CardContent className="space-y-3">
+          {/* Keyword Recommendations */}
+          {(activeRecTab === 'all' || activeRecTab === 'keywords') &&
+            recKeywords.map((tip, i) => (
+              <RecommendationCard
+                key={`kw-${i}`}
+                category="Keyword placement"
+                content={safeText(tip)}
+              />
+            ))}
 
-          {/* Quantifiable Impact */}
-          {(activeRecTab === 'all' || activeRecTab === 'impact') && recImpact.map((tip, i) => (
-            <RecommendationItem
-              key={`imp-${i}`}
-              badge="Measurable Impact"
-              color="amber"
-              content={safeText(tip)}
-            />
-          ))}
+          {/* Measurable Impact */}
+          {(activeRecTab === 'all' || activeRecTab === 'impact') &&
+            recImpact.map((tip, i) => (
+              <RecommendationCard
+                key={`imp-${i}`}
+                category="Measurable metrics"
+                content={safeText(tip)}
+              />
+            ))}
 
           {/* Action Verbs */}
-          {(activeRecTab === 'all' || activeRecTab === 'verbs') && recVerbs.map((tip, i) => (
-            <RecommendationItem
-              key={`verb-${i}`}
-              badge="Action Verb Power"
-              color="sky"
-              content={safeText(tip)}
-            />
-          ))}
+          {(activeRecTab === 'all' || activeRecTab === 'verbs') &&
+            recVerbs.map((tip, i) => (
+              <RecommendationCard
+                key={`verb-${i}`}
+                category="Action verbs"
+                content={safeText(tip)}
+              />
+            ))}
 
           {/* ATS Compliance */}
-          {(activeRecTab === 'all' || activeRecTab === 'compliance') && recCompliance.map((tip, i) => (
-            <RecommendationItem
-              key={`comp-${i}`}
-              badge="ATS Format Audit"
-              color="emerald"
-              content={safeText(tip)}
-            />
-          ))}
+          {(activeRecTab === 'all' || activeRecTab === 'compliance') &&
+            recCompliance.map((tip, i) => (
+              <RecommendationCard
+                key={`comp-${i}`}
+                category="Formatting standards"
+                content={safeText(tip)}
+              />
+            ))}
 
-          {/* Fallback to suggestions list if categorized is empty */}
-          {recKeywords.length === 0 && recImpact.length === 0 && suggestions.length > 0 && (
+          {/* Fallback to general suggestions array if category arrays are empty */}
+          {recKeywords.length === 0 &&
+            recImpact.length === 0 &&
+            suggestions.length > 0 &&
             suggestions.map((s, i) => (
-              <RecommendationItem
+              <RecommendationCard
                 key={`sug-${i}`}
-                badge={`Recommendation #${i + 1}`}
-                color="amber"
+                category={`Recommendation #${i + 1}`}
                 content={safeText(s)}
               />
-            ))
-          )}
-        </div>
-      </div>
+            ))}
+        </CardContent>
+      </Card>
 
       {/* ══════════════════════════════════════════════════════ */}
-      {/* 6. FULL EXTRACTED RESUME SECTIONS                     */}
+      {/* 5. PARSED RESUME CONTENT (Supported sections only)    */}
       {/* ══════════════════════════════════════════════════════ */}
 
       {/* Professional Summary */}
       {summary && (
-        <div className="glass-card p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Sparkles size={16} className="text-volt-400" />
-            <h4 className="font-display font-600 text-ink-100 text-sm">Professional Summary</h4>
-          </div>
-          <p className="text-ink-300 text-sm leading-relaxed whitespace-pre-line">{summary}</p>
-        </div>
+        <Card className="shadow-lift">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Professional summary</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+              {summary}
+            </p>
+          </CardContent>
+        </Card>
       )}
 
       {/* Work Experience */}
-      <div className="glass-card p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <Briefcase size={16} className="text-volt-400" />
-          <h4 className="font-display font-600 text-ink-100 text-sm">Work Experience</h4>
-        </div>
-
-        {experience.length > 0 ? (
-          <div className="space-y-4">
+      {experience.length > 0 && (
+        <Card className="shadow-lift">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <BriefcaseBusiness size={16} className="text-foreground" aria-hidden="true" />
+              <CardTitle className="text-base">Work experience</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
             {experience.map((exp, idx) => {
               if (typeof exp === 'string') {
                 return (
-                  <p key={idx} className="text-ink-300 text-sm leading-relaxed whitespace-pre-line">{exp}</p>
+                  <p key={idx} className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                    {exp}
+                  </p>
                 )
               }
-              const roleTitle = safeText(exp.role) || 'Role'
+              const roleTitle = safeText(exp.role) || 'Position'
               const company = safeText(exp.company)
               const duration = safeText(exp.duration)
               const location = safeText(exp.location)
-              const details = Array.isArray(exp.details) ? exp.details : (exp.details ? [safeText(exp.details)] : [])
+              const details = Array.isArray(exp.details)
+                ? exp.details
+                : exp.details
+                ? [safeText(exp.details)]
+                : []
 
               return (
-                <div key={idx} className="p-4 rounded-xl bg-ink-800/40 border border-ink-700/40 space-y-2">
+                <div key={idx} className="p-4 rounded-badge bg-secondary/40 border border-border/70 space-y-2">
                   <div className="flex items-start justify-between flex-wrap gap-2">
                     <div>
-                      <h5 className="font-display font-600 text-ink-100 text-sm">{roleTitle}</h5>
+                      <h4 className="text-sm font-semibold text-foreground">{roleTitle}</h4>
                       {company && (
-                        <p className="text-volt-400 text-xs font-medium mt-0.5">{company}</p>
+                        <p className="text-xs text-muted-foreground font-medium mt-0.5">
+                          {company}
+                        </p>
                       )}
                     </div>
                     {(duration || location) && (
-                      <div className="text-right text-xs text-ink-500">
-                        {duration && <span className="font-mono bg-ink-800 px-2 py-0.5 rounded border border-ink-700/50">{duration}</span>}
-                        {location && <span className="ml-2 text-ink-400">{location}</span>}
+                      <div className="text-xs font-mono text-muted-foreground text-right">
+                        {duration && <span>{duration}</span>}
+                        {location && <span className="ml-2">({location})</span>}
                       </div>
                     )}
                   </div>
 
                   {details.length > 0 && (
-                    <ul className="space-y-1.5 mt-2.5 text-xs text-ink-300 leading-relaxed">
+                    <ul className="space-y-1.5 text-xs text-foreground/90 leading-relaxed pt-1">
                       {details.map((bullet, bIdx) => (
                         <li key={bIdx} className="flex items-start gap-2">
-                          <span className="text-volt-400 font-mono mt-0.5">•</span>
+                          <Check size={12} className="text-muted-foreground shrink-0 mt-0.5" aria-hidden="true" />
                           <span>{safeText(bullet)}</span>
                         </li>
                       ))}
@@ -585,74 +751,127 @@ export default function ResultsPanel({ data = {} }) {
                 </div>
               )
             })}
-          </div>
-        ) : (
-          <p className="text-ink-500 text-sm">No work experience entries extracted.</p>
-        )}
-      </div>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Education */}
-      <div className="glass-card p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <BookOpen size={16} className="text-volt-400" />
-          <h4 className="font-display font-600 text-ink-100 text-sm">Education</h4>
-        </div>
-
-        {education.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {education.map((edu, idx) => {
-              if (typeof edu === 'string') {
-                return (
-                  <div key={idx} className="p-3.5 rounded-xl bg-ink-800/40 border border-ink-700/40">
-                    <p className="text-ink-200 text-sm">{edu}</p>
-                  </div>
-                )
-              }
-              const degree = safeText(edu.degree) || 'Degree'
-              const institution = safeText(edu.institution)
-              const details = safeText(edu.details)
-              const year = safeText(edu.year)
-              const gpa = safeText(edu.gpa)
-
-              return (
-                <div key={idx} className="p-4 rounded-xl bg-ink-800/40 border border-ink-700/40 flex flex-col justify-between">
-                  <div>
-                    <h5 className="font-display font-600 text-ink-100 text-sm">{degree}</h5>
-                    {institution && (
-                      <p className="text-volt-400 text-xs font-medium mt-0.5">{institution}</p>
-                    )}
-                    {details && (
-                      <p className="text-ink-400 text-xs mt-2 leading-relaxed">{details}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 mt-3 text-xs text-ink-500">
-                    {year && <span className="font-mono">{year}</span>}
-                    {gpa && <span className="bg-ink-800 px-2 py-0.5 rounded text-volt-400 font-medium">GPA: {gpa}</span>}
-                  </div>
+      {/* Education & Qualifications */}
+      {(education.length > 0 || mandatoryCredsRequired.length > 0 || preferredCredsRequired.length > 0) && (
+        <Card className="shadow-lift">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <GraduationCap size={16} className="text-foreground" aria-hidden="true" />
+                <CardTitle className="text-base">Education & qualifications</CardTitle>
+              </div>
+              {eduEvidence.degree_level && (
+                <Badge variant="outline" className="text-xs font-mono">
+                  {eduEvidence.degree_level}
+                </Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Target Role Qualification Requirements */}
+            {(mandatoryCredsRequired.length > 0 || preferredCredsRequired.length > 0) && (
+              <div className="p-3.5 rounded-badge bg-secondary/50 border border-border/80 space-y-2">
+                <span className="text-xs font-semibold text-foreground block">
+                  Target role credential verification
+                </span>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {mandatoryCredsRequired.map((req, i) => {
+                    const isMatched = mandatoryCredsMatched.some((m) =>
+                      String(m).toLowerCase().includes(req.toLowerCase())
+                    )
+                    return (
+                      <Badge
+                        key={`mand-${i}`}
+                        variant={isMatched ? 'success' : 'destructive'}
+                        className="gap-1 font-mono text-[11px]"
+                      >
+                        <ShieldCheck size={11} aria-hidden="true" />
+                        <span>Mandatory: {req}</span>
+                        <span>{isMatched ? '(Documented)' : '(Unverified)'}</span>
+                      </Badge>
+                    )
+                  })}
+                  {preferredCredsRequired.map((req, i) => {
+                    const isMatched = preferredCredsMatched.some((m) =>
+                      String(m).toLowerCase().includes(req.toLowerCase())
+                    )
+                    return (
+                      <Badge
+                        key={`pref-${i}`}
+                        variant={isMatched ? 'secondary' : 'outline'}
+                        className="gap-1 font-mono text-[11px]"
+                      >
+                        <span>Preferred (Optional): {req}</span>
+                        <span>{isMatched ? '(Documented)' : '(Not Found)'}</span>
+                      </Badge>
+                    )
+                  })}
                 </div>
-              )
-            })}
-          </div>
-        ) : (
-          <p className="text-ink-500 text-sm">No education entries extracted.</p>
-        )}
-      </div>
+              </div>
+            )}
+
+            {education.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {education.map((edu, idx) => {
+                  if (typeof edu === 'string') {
+                    return (
+                      <div key={idx} className="p-3.5 rounded-badge bg-secondary/40 border border-border/70">
+                        <p className="text-sm text-foreground">{edu}</p>
+                      </div>
+                    )
+                  }
+                  const degree = safeText(edu.degree) || 'Degree'
+                  const institution = safeText(edu.institution)
+                  const details = safeText(edu.details)
+                  const year = safeText(edu.year)
+
+                  return (
+                    <div
+                      key={idx}
+                      className="p-3.5 rounded-badge bg-secondary/40 border border-border/70 space-y-1"
+                    >
+                      <h4 className="text-sm font-semibold text-foreground">{degree}</h4>
+                      {institution && (
+                        <p className="text-xs text-muted-foreground">{institution}</p>
+                      )}
+                      {year && (
+                        <p className="text-[11px] font-mono text-muted-foreground">{year}</p>
+                      )}
+                      {details && (
+                        <p className="text-xs text-foreground/90 pt-1 leading-normal">{details}</p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">
+                No collegiate education section parsed from resume.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Projects */}
-      <div className="glass-card p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <Layers size={16} className="text-volt-400" />
-          <h4 className="font-display font-600 text-ink-100 text-sm">Key Technical Projects</h4>
-        </div>
-
-        {projects.length > 0 ? (
-          <div className="space-y-3">
+      {projects.length > 0 && (
+        <Card className="shadow-lift">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <FolderGit2 size={16} className="text-foreground" aria-hidden="true" />
+              <CardTitle className="text-base">Key projects</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
             {projects.map((proj, idx) => {
               if (typeof proj === 'string') {
                 return (
-                  <div key={idx} className="flex gap-2 items-start text-sm text-ink-300">
-                    <span className="text-volt-400 font-mono mt-0.5">→</span>
-                    <span>{proj}</span>
+                  <div key={idx} className="text-sm text-foreground">
+                    {proj}
                   </div>
                 )
               }
@@ -662,27 +881,31 @@ export default function ResultsPanel({ data = {} }) {
               const technologies = Array.isArray(proj.technologies) ? proj.technologies : []
 
               return (
-                <div key={idx} className="p-4 rounded-xl bg-ink-800/40 border border-ink-700/40 space-y-2">
+                <div key={idx} className="p-3.5 rounded-badge bg-secondary/40 border border-border/70 space-y-1.5">
                   <div className="flex items-center justify-between flex-wrap gap-2">
-                    <h5 className="font-display font-600 text-ink-100 text-sm">{projName}</h5>
+                    <h4 className="text-sm font-semibold text-foreground">{projName}</h4>
                     {projLink && (
                       <a
                         href={projLink}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-xs text-volt-400 hover:underline flex items-center gap-1 font-medium"
+                        className="text-xs text-foreground font-medium underline underline-offset-2 flex items-center gap-1"
                       >
-                        Live Repository <ExternalLink size={11} />
+                        <span>Project link</span>
+                        <ExternalLink size={11} aria-hidden="true" />
                       </a>
                     )}
                   </div>
                   {projDesc && (
-                    <p className="text-ink-300 text-xs leading-relaxed">{projDesc}</p>
+                    <p className="text-xs text-foreground/90 leading-relaxed">{projDesc}</p>
                   )}
                   {technologies.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 pt-1">
+                    <div className="flex flex-wrap gap-1 pt-1">
                       {technologies.map((t, tIdx) => (
-                        <span key={tIdx} className="text-[11px] font-mono bg-ink-800 text-ink-300 px-2 py-0.5 rounded border border-ink-700/40">
+                        <span
+                          key={tIdx}
+                          className="text-[11px] font-mono bg-card px-2 py-0.5 rounded-cell border border-border/60 text-muted-foreground"
+                        >
                           {safeText(t)}
                         </span>
                       ))}
@@ -691,126 +914,108 @@ export default function ResultsPanel({ data = {} }) {
                 </div>
               )
             })}
-          </div>
-        ) : (
-          <p className="text-ink-500 text-sm">No projects extracted.</p>
-        )}
-      </div>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Certifications, Languages & Achievements */}
+      {/* Certifications & Languages (if present) */}
       {(certifications.length > 0 || languages.length > 0 || achievements.length > 0) && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {certifications.length > 0 && (
-            <div className="glass-card p-5">
-              <div className="flex items-center gap-2 mb-3">
-                <Award size={15} className="text-volt-400" />
-                <h4 className="font-display font-600 text-ink-100 text-sm">Certifications</h4>
-              </div>
-              <ul className="space-y-1.5 text-xs text-ink-300">
-                {certifications.map((c, i) => (
-                  <li key={i} className="flex items-start gap-1.5">
-                    <span className="text-volt-400 mt-0.5">✓</span>
-                    <span>{safeText(c)}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <Card className="shadow-lift">
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-1.5">
+                  <Award size={15} className="text-foreground" aria-hidden="true" />
+                  <CardTitle className="text-sm">Certifications</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-1 text-xs text-foreground">
+                  {certifications.map((c, i) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <Award size={12} className="text-muted-foreground shrink-0 mt-0.5" aria-hidden="true" />
+                      <span>{safeText(c)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
           )}
 
           {languages.length > 0 && (
-            <div className="glass-card p-5">
-              <div className="flex items-center gap-2 mb-3">
-                <Languages size={15} className="text-sky-400" />
-                <h4 className="font-display font-600 text-ink-100 text-sm">Languages</h4>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {languages.map((l, i) => (
-                  <span key={i} className="text-xs bg-ink-800 text-ink-300 px-2.5 py-1 rounded-lg border border-ink-700/40">
-                    {safeText(l)}
-                  </span>
-                ))}
-              </div>
-            </div>
+            <Card className="shadow-lift">
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-1.5">
+                  <Languages size={15} className="text-foreground" aria-hidden="true" />
+                  <CardTitle className="text-sm">Languages</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-1">
+                  {languages.map((l, i) => (
+                    <Badge key={i} variant="secondary" className="text-xs">
+                      {safeText(l)}
+                    </Badge>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           )}
 
           {achievements.length > 0 && (
-            <div className="glass-card p-5">
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles size={15} className="text-amber-400" />
-                <h4 className="font-display font-600 text-ink-100 text-sm">Achievements & Honors</h4>
-              </div>
-              <ul className="space-y-1.5 text-xs text-ink-300">
-                {achievements.map((a, i) => (
-                  <li key={i} className="flex items-start gap-1.5">
-                    <span className="text-amber-400 mt-0.5">★</span>
-                    <span>{safeText(a)}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <Card className="shadow-lift">
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-1.5">
+                  <Trophy size={15} className="text-foreground" aria-hidden="true" />
+                  <CardTitle className="text-sm">Achievements</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-1 text-xs text-foreground">
+                  {achievements.map((a, i) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <Trophy size={12} className="text-muted-foreground shrink-0 mt-0.5" aria-hidden="true" />
+                      <span>{safeText(a)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
           )}
         </div>
       )}
-
     </div>
   )
 }
 
-// ── Subcomponents ─────────────────────────────────────────────
-
-function StatBadge({ icon, value, label, sub, color }) {
-  const colorMap = {
-    volt: 'border-volt-400/20 bg-volt-400/5 text-volt-400',
-    red: 'border-red-400/20 bg-red-400/5 text-red-400',
-    sky: 'border-sky-400/20 bg-sky-400/5 text-sky-400',
-    emerald: 'border-emerald-400/20 bg-emerald-400/5 text-emerald-400',
-  }
+// ── Compact Metric Tile ───────────────────────────────────────
+function MetricTile({ label, value, sub, badge, highlight }) {
   return (
-    <div className={`p-3.5 rounded-xl border ${colorMap[color] || colorMap.volt} flex flex-col justify-between`}>
+    <div className="p-3.5 rounded-badge bg-secondary/40 border border-border/70 flex flex-col justify-between">
       <div className="flex items-center justify-between mb-1">
-        {icon}
-        <span className="font-display font-800 text-xl text-ink-50">{value}</span>
-      </div>
-      <div>
-        <p className="text-ink-200 text-xs font-semibold">{label}</p>
-        <p className="text-ink-500 text-[10px] truncate">{sub}</p>
-      </div>
-    </div>
-  )
-}
-
-function AuditItem({ passed, label, detail }) {
-  return (
-    <div className="flex items-start gap-2 p-2.5 rounded-lg bg-ink-800/40 border border-ink-700/40">
-      {passed ? (
-        <CheckCircle2 size={14} className="text-emerald-400 flex-shrink-0 mt-0.5" />
-      ) : (
-        <AlertTriangle size={14} className="text-amber-400 flex-shrink-0 mt-0.5" />
-      )}
-      <div>
-        <span className="font-medium text-ink-200 block">{label}</span>
-        <span className="text-[11px] text-ink-400 block">{detail}</span>
-      </div>
-    </div>
-  )
-}
-
-function RecommendationItem({ badge, color, content }) {
-  const badgeColors = {
-    volt: 'bg-volt-400/10 text-volt-400 border-volt-400/30',
-    amber: 'bg-amber-400/10 text-amber-400 border-amber-400/30',
-    sky: 'bg-sky-400/10 text-sky-400 border-sky-400/30',
-    emerald: 'bg-emerald-400/10 text-emerald-400 border-emerald-400/30',
-  }
-
-  return (
-    <div className="p-3.5 rounded-xl bg-ink-800/60 border border-ink-700/50 hover:border-ink-600/60 transition-colors animate-fade-in flex flex-col gap-1.5">
-      <div className="flex items-center justify-between">
-        <span className={`text-[10px] font-mono uppercase font-bold tracking-wider px-2 py-0.5 rounded border ${badgeColors[color] || badgeColors.amber}`}>
+        <span className="text-xs text-muted-foreground font-medium">{label}</span>
+        <Badge variant={highlight ? 'warning' : 'secondary'} className="text-[10px] py-0 px-1.5 font-mono">
           {badge}
-        </span>
+        </Badge>
       </div>
-      <p className="text-ink-300 text-xs leading-relaxed">{content}</p>
+      <div>
+        <p className="font-sans font-bold text-2xl text-foreground tabular-nums">{value}</p>
+        <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{sub}</p>
+      </div>
+    </div>
+  )
+}
+
+// ── Recommendation Item Card ──────────────────────────────────
+function RecommendationCard({ category, content }) {
+  return (
+    <div className="p-3.5 rounded-badge bg-secondary/40 border border-border/70 space-y-1">
+      <div className="flex items-center justify-between">
+        <Badge variant="secondary" className="text-[10px] font-mono">
+          {category}
+        </Badge>
+      </div>
+      <p className="text-xs text-foreground leading-relaxed pt-0.5">{content}</p>
     </div>
   )
 }

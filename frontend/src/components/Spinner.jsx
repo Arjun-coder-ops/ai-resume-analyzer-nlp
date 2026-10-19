@@ -1,9 +1,20 @@
-// components/Spinner.jsx
+// components/Spinner.jsx - Interior Design System Loading Indicator
+import { LoaderCircle } from 'lucide-react'
 
-export default function Spinner({ size = 'md', color = 'volt' }) {
-  const sizes = { sm: 'w-4 h-4', md: 'w-6 h-6', lg: 'w-10 h-10' }
-  const colors = { volt: 'border-volt-400', white: 'border-white', muted: 'border-ink-400' }
+export default function Spinner({ size = 'md', className = '' }) {
+  const sizeMap = {
+    sm: 16,
+    md: 22,
+    lg: 32,
+  }
+  const pixelSize = typeof size === 'number' ? size : (sizeMap[size] || 22)
+
   return (
-    <div className={`${sizes[size]} rounded-full border-2 ${colors[color]} border-t-transparent animate-spin`} />
+    <LoaderCircle
+      size={pixelSize}
+      strokeWidth={2}
+      className={`animate-spin text-foreground shrink-0 ${className}`}
+      aria-hidden="true"
+    />
   )
 }

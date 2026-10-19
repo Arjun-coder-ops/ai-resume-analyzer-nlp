@@ -1,6 +1,6 @@
-// pages/Dashboard.jsx - Main application dashboard
+// pages/Dashboard.jsx - Resume Analysis Workspace (Interior Design System)
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
 import Navbar from '../components/Navbar'
 import DropZone from '../components/DropZone'
@@ -8,69 +8,197 @@ import ResultsPanel from '../components/ResultsPanel'
 import HistoryCard from '../components/HistoryCard'
 import Spinner from '../components/Spinner'
 import ErrorBoundary from '../components/ErrorBoundary'
+import { Button } from '../components/ui/Button'
+import { Input } from '../components/ui/Input'
+import { Textarea } from '../components/ui/Textarea'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card'
+import { Badge } from '../components/ui/Badge'
 import api from '../utils/api'
 import {
-  Zap, History, PlusCircle, Briefcase, AlertCircle,
-  ChevronRight, BarChart3, Sparkles
+  FileText, History, PlusCircle, CircleAlert, AlertCircle,
+  Clock, ArrowRight, CheckCircle2, RotateCcw, LoaderCircle, Lightbulb
 } from 'lucide-react'
 
 export default function Dashboard() {
   const { user } = useAuth()
 
-  // ── Analyzer form state ──────────────────────────────────
-  const [file, setFile]           = useState(null)
-  const [jobTitle, setJobTitle]   = useState('')
-  const [jobDesc, setJobDesc]     = useState('')
+  // ── Form State ─────────────────────────────────────────────
+  const [file, setFile] = useState(null)
+  const [jobTitle, setJobTitle] = useState('')
+  const [jobDesc, setJobDesc] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
-  const [error, setError]         = useState('')
-  const [result, setResult]       = useState(null)
+  const [error, setError] = useState('')
+  const [result, setResult] = useState(null)
 
-  // ── History state ────────────────────────────────────────
-  const [history, setHistory]         = useState([])
+  // ── History & Navigation State ─────────────────────────────
+  const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(true)
-  const [activeTab, setActiveTab]     = useState('analyze') // 'analyze' | 'history'
+  const [activeTab, setActiveTab] = useState('analyze') // 'analyze' | 'history'
 
-  // ── Daily Quota State (5 trials per user per day) ────────
-  const [quota, setQuota] = useState({ dailyLimit: 5, trialsUsed: 0, trialsRemaining: 5 })
+  // ── Real Quota State (5 trials/day) ────────────────────────
+  const [quota, setQuota] = useState(null) // null indicates initial loading
+  const [quotaLoading, setQuotaLoading] = useState(true)
 
-  // Load history and quota on mount
+  // Polling ref to ensure timers are always cancelled on unmount or reset
+  const pollTimerRef = useRef(null)
+  const isMountedRef = useRef(true)
+  const consecutiveErrorsRef = useRef(0)
+
+  // ── Polling Handler for BullMQ Background Job ───────────────
+  const pollAnalysis = useCallback(
+    async (id, attempt = 1) => {
+      // Avoid scheduling further checks if unmounted
+      if (!isMountedRef.current) return
+
+      try {
+        const { data } = await api.get(`/history/${id}`)
+        consecutiveErrorsRef.current = 0
+        const analysis = data?.data
+
+        if (!analysis || !isMountedRef.current) return
+
+        if (analysis.status === 'completed') {
+          sessionStorage.removeItem('resumeiq_active_analysis')
+          setResult(analysis)
+          setAnalyzing(false)
+          loadHistory()
+          loadQuota()
+          setTimeout(() => {
+            document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }, 150)
+        } else if (analysis.status === 'failed') {
+          sessionStorage.removeItem('resumeiq_active_analysis')
+          setError(analysis.errorMessage || 'AI analysis failed during processing.')
+          setAnalyzing(false)
+          loadQuota()
+          loadHistory()
+        } else {
+          // Status is 'processing' or queued in BullMQ
+          const MAX_POLLS = 80 // ~4 minutes at 3s intervals
+          if (attempt >= MAX_POLLS) {
+            sessionStorage.removeItem('resumeiq_active_analysis')
+            setError('Analysis is taking longer than usual. Please check your history in a moment.')
+            setAnalyzing(false)
+            loadHistory()
+          } else {
+            pollTimerRef.current = setTimeout(() => {
+              pollAnalysis(id, attempt + 1)
+            }, 3000)
+          }
+        }
+      } catch (err) {
+        if (!isMountedRef.current) return
+        const status = err.response?.status
+
+        // Stop polling immediately on non-retryable terminal errors
+        if (status === 404) {
+          sessionStorage.removeItem('resumeiq_active_analysis')
+          setError('Analysis record was not found or was deleted.')
+          setAnalyzing(false)
+          return
+        }
+
+        if (status === 401 || status === 403) {
+          sessionStorage.removeItem('resumeiq_active_analysis')
+          setError('Session expired or unauthorized. Please log in again.')
+          setAnalyzing(false)
+          return
+        }
+
+        // On transient network error, retry up to 5 consecutive times before stopping
+        consecutiveErrorsRef.current += 1
+        if (consecutiveErrorsRef.current <= 5 && attempt < 80) {
+          pollTimerRef.current = setTimeout(() => {
+            pollAnalysis(id, attempt + 1)
+          }, 3500)
+        } else {
+          sessionStorage.removeItem('resumeiq_active_analysis')
+          setError('Lost connection to the analysis service. Please check your history later.')
+          setAnalyzing(false)
+        }
+      }
+    },
+    []
+  )
+
   useEffect(() => {
-    loadHistory()
+    isMountedRef.current = true
     loadQuota()
-  }, [])
+    loadHistory()
 
+    // Resume polling across page refreshes if an analysis was active
+    const savedActiveAnalysisId = sessionStorage.getItem('resumeiq_active_analysis')
+    if (savedActiveAnalysisId) {
+      setAnalyzing(true)
+      pollAnalysis(savedActiveAnalysisId, 1)
+    }
+
+    return () => {
+      isMountedRef.current = false
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current)
+        pollTimerRef.current = null
+      }
+    }
+  }, [pollAnalysis])
+
+  // ── Load Quota from Backend ────────────────────────────────
   const loadQuota = async () => {
     try {
+      setQuotaLoading(true)
       const { data } = await api.get('/analyze/quota')
-      if (data?.data) {
+      if (isMountedRef.current && data?.data) {
         setQuota(data.data)
       }
     } catch {
-      // Non-critical, fallback to defaults
-    }
-  }
-
-  const loadHistory = async () => {
-    setHistoryLoading(true)
-    try {
-      const { data } = await api.get('/history?limit=20')
-      setHistory(data.data)
-    } catch {
-      // Non-critical, just skip
+      // If quota fetch fails, preserve safe state without hardcoding assumptions
+      if (isMountedRef.current) {
+        setQuota((prev) => prev || { dailyLimit: 5, trialsUsed: 0, trialsRemaining: 5 })
+      }
     } finally {
-      setHistoryLoading(false)
+      if (isMountedRef.current) setQuotaLoading(false)
     }
   }
 
-  // ── Submit analysis ──────────────────────────────────────
+  // ── Load History ───────────────────────────────────────────
+  const loadHistory = async () => {
+    try {
+      setHistoryLoading(true)
+      const { data } = await api.get('/history?limit=20')
+      if (isMountedRef.current && Array.isArray(data?.data)) {
+        setHistory(data.data)
+      }
+    } catch {
+      // Non-critical background fetch failure
+    } finally {
+      if (isMountedRef.current) setHistoryLoading(false)
+    }
+  }
+
+  // ── Submit Analysis ────────────────────────────────────────
   const handleAnalyze = async (e) => {
     e.preventDefault()
-    if (quota.trialsRemaining <= 0) {
-      setError('Daily trial limit reached. You have completed 5 analyses today. Your quota resets tomorrow at midnight.')
+
+    if (quota && quota.trialsRemaining <= 0) {
+      setError('Daily limit reached. You have completed all 5 analyses for today. Your quota resets tomorrow at midnight.')
       return
     }
-    if (!file) { setError('Please upload your resume PDF.'); return }
-    if (jobDesc.trim().length < 50) { setError('Job description must be at least 50 characters.'); return }
+
+    if (!file) {
+      setError('Please upload your resume in PDF format.')
+      return
+    }
+
+    if (!jobDesc || jobDesc.trim().length < 50) {
+      setError('Job description must be at least 50 characters.')
+      return
+    }
+
+    // Clear previous polling if any
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
 
     setAnalyzing(true)
     setError('')
@@ -79,7 +207,7 @@ export default function Dashboard() {
     try {
       const formData = new FormData()
       formData.append('resume', file)
-      formData.append('jobDescription', jobDesc)
+      formData.append('jobDescription', jobDesc.trim())
       formData.append('jobTitle', jobTitle.trim() || 'Untitled Position')
 
       const { data } = await api.post('/analyze', formData, {
@@ -88,267 +216,290 @@ export default function Dashboard() {
 
       loadQuota()
 
-      if (data.data && (data.data.status === 'processing' || data.data.status === 'queued')) {
-        pollAnalysis(data.data.analysisId)
-      } else if (data.data && data.data.status === 'completed') {
-        setResult(data.data)
+      const jobData = data?.data
+      if (jobData?.status === 'completed') {
+        // Synchronous completion fallback
+        setResult(jobData)
         setAnalyzing(false)
         loadHistory()
         loadQuota()
-        setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+        setTimeout(() => {
+          document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }, 150)
       } else {
-        pollAnalysis(data.data?.analysisId || data.data?._id)
+        // Enqueued background job with status 'processing'
+        const analysisId = jobData?.analysisId || jobData?._id
+        if (analysisId) {
+          sessionStorage.setItem('resumeiq_active_analysis', analysisId)
+          pollAnalysis(analysisId, 1)
+        } else {
+          setError('Analysis initiated but missing reference ID.')
+          setAnalyzing(false)
+        }
       }
     } catch (err) {
-      const msg = err.response?.data?.message || 'Analysis failed. Please check that your NLP service is running.'
+      sessionStorage.removeItem('resumeiq_active_analysis')
+      const msg =
+        err.response?.data?.message ||
+        'Analysis failed. Please verify the NLP service is active and try again.'
       setError(msg)
       setAnalyzing(false)
       loadQuota()
     }
   }
 
-  const pollAnalysis = async (id, attempt = 1) => {
-    try {
-      const { data } = await api.get(`/history/${id}`)
-      const analysis = data.data
-      
-      if (analysis.status === 'completed') {
-        setResult(analysis)
-        setAnalyzing(false)
-        loadHistory()
-        loadQuota()
-        setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
-      } else if (analysis.status === 'failed') {
-        setError(analysis.errorMessage || 'AI processing failed.')
-        setAnalyzing(false)
-        loadQuota()
-      } else {
-        // Still processing or queued
-        const MAX_POLLS = 100; // ~5 mins at 3s intervals
-        if (attempt >= MAX_POLLS) {
-          setError('Analysis is taking longer than expected. Please check your history later.')
-          setAnalyzing(false)
-          loadHistory()
-        } else {
-          // Queue next check
-          setTimeout(() => pollAnalysis(id, attempt + 1), 3000)
-        }
-      }
-    } catch (err) {
-      setError('Lost connection while waiting for AI analysis.')
-      setAnalyzing(false)
-    }
-  }
-
+  // ── Reset Form ─────────────────────────────────────────────
   const handleReset = () => {
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+    sessionStorage.removeItem('resumeiq_active_analysis')
     setFile(null)
     setJobTitle('')
     setJobDesc('')
     setResult(null)
     setError('')
+    setAnalyzing(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const charCount = jobDesc.length
-  const charColor = charCount < 50 ? 'text-red-400' : charCount > 3000 ? 'text-amber-400' : 'text-ink-500'
+  const charCount = jobDesc.trim().length
+  const isDescValid = charCount >= 50
+  const isQuotaExhausted = quota && quota.trialsRemaining === 0
 
   return (
-    <div className="min-h-screen bg-mesh">
+    <div className="min-h-screen bg-background">
       <Navbar />
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
-
-        {/* ── Welcome banner ─────────────────────────────── */}
-        <div className="mb-8 animate-fade-up">
-          <p className="section-label mb-1">Dashboard</p>
-          <div className="flex items-end justify-between flex-wrap gap-4">
+        {/* ── Page Header & Workspace Summary ──────────────── */}
+        <div className="mb-8 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-              <h1 className="font-display text-3xl font-700 text-ink-50">
-                Hey, {user?.name?.split(' ')[0]} 👋
+              <p className="text-xs font-mono font-medium text-muted-foreground mb-1 uppercase tracking-wider">
+                Dashboard
+              </p>
+              <h1 className="font-sans text-2xl sm:text-3xl font-semibold text-foreground tracking-tight">
+                Hey, {user?.name ? user.name.split(' ')[0] : 'there'}
               </h1>
-              <div className="flex items-center gap-2 mt-2">
-                <span className="text-xs text-ink-400 font-medium">Daily Free Trials:</span>
-                <span className={`text-xs font-mono font-bold px-2.5 py-0.5 rounded-full border ${
-                  quota.trialsRemaining > 0
-                    ? 'text-volt-400 bg-volt-400/10 border-volt-400/30'
-                    : 'text-red-400 bg-red-400/10 border-red-400/30'
-                }`}>
-                  {quota.trialsRemaining} / {quota.dailyLimit} remaining today
-                </span>
-              </div>
+              <p className="text-muted-foreground text-sm mt-1 leading-normal">
+                Evaluate your resume against target job requirements to detect skills gaps and optimize ATS compatibility.
+              </p>
             </div>
-            {result && (
-              <button onClick={handleReset}
-                className="btn-ghost flex items-center gap-2 text-sm">
-                <PlusCircle size={15} />
-                New Analysis
-              </button>
-            )}
+
+            {/* Quota Indicator */}
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-btn bg-card border border-border/80 shadow-row text-xs">
+                <span className="text-muted-foreground">Daily quota:</span>
+                {quotaLoading ? (
+                  <span className="font-mono text-muted-foreground">Checking…</span>
+                ) : quota ? (
+                  <span className={`font-mono font-medium ${isQuotaExhausted ? 'text-destructive font-semibold' : 'text-foreground'}`}>
+                    {quota.trialsRemaining} of {quota.dailyLimit} remaining
+                  </span>
+                ) : (
+                  <span className="font-mono text-muted-foreground">5 of 5 remaining</span>
+                )}
+              </div>
+
+              {result && (
+                <Button variant="outline" size="sm" onClick={handleReset} className="gap-1.5">
+                  <PlusCircle size={14} aria-hidden="true" />
+                  <span>New analysis</span>
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* ── Tab Navigation ─────────────────────────────── */}
+          <div className="flex items-center gap-2 border-b border-border/70 pt-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('analyze')}
+              className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium border-b-2 -mb-px transition-colors duration-150 ${
+                activeTab === 'analyze'
+                  ? 'border-primary text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <FileText size={15} aria-hidden="true" />
+              <span>Analyze resume</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('history')}
+              className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium border-b-2 -mb-px transition-colors duration-150 ${
+                activeTab === 'history'
+                  ? 'border-primary text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <History size={15} aria-hidden="true" />
+              <span>History</span>
+              {history.length > 0 && (
+                <Badge variant="secondary" className="font-mono text-[0.6875rem] py-0 px-1.5">
+                  {history.length}
+                </Badge>
+              )}
+            </button>
           </div>
         </div>
 
-        {/* ── Tab navigation ─────────────────────────────── */}
-        <div className="flex items-center gap-1 mb-6 border-b border-ink-800">
-          {[
-            { id: 'analyze', label: 'Analyze Resume', icon: <Sparkles size={14} /> },
-            { id: 'history', label: `History (${history.length})`, icon: <History size={14} /> },
-          ].map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-all border-b-2 -mb-px
-                ${activeTab === tab.id
-                  ? 'text-volt-400 border-volt-400'
-                  : 'text-ink-500 border-transparent hover:text-ink-300'
-                }`}>
-              {tab.icon}
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* ════════════════════════════════════════════════ */}
-        {/* ANALYZE TAB                                      */}
-        {/* ════════════════════════════════════════════════ */}
+        {/* ════════════════════════════════════════════════════ */}
+        {/* TAB: ANALYZE RESUME                                  */}
+        {/* ════════════════════════════════════════════════════ */}
         {activeTab === 'analyze' && (
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* ── Left Column: Analysis Form ────────────────── */}
+            <div className="lg:col-span-5 space-y-5">
+              <Card className="shadow-lift">
+                <CardHeader>
+                  <CardTitle>Evaluation setup</CardTitle>
+                  <CardDescription>
+                    Provide your resume document and the target role description.
+                  </CardDescription>
+                </CardHeader>
 
-            {/* ── Left: input form ─────────────────────── */}
-            <div className="lg:col-span-2 space-y-5">
-              <div className="glass-card p-5">
-                <h2 className="font-display font-600 text-ink-100 mb-5 flex items-center gap-2">
-                  <BarChart3 size={16} className="text-volt-400" />
-                  Resume Input
-                </h2>
-
-                <form onSubmit={handleAnalyze} className="space-y-5">
-                  {/* Upload */}
-                  <div>
-                    <label className="block text-ink-400 text-xs font-medium mb-2 uppercase tracking-wide">
-                      Resume PDF *
-                    </label>
-                    <DropZone file={file} onFileChange={setFile} />
-                  </div>
-
-                  {/* Job title */}
-                  <div>
-                    <label className="block text-ink-400 text-xs font-medium mb-2 uppercase tracking-wide">
-                      Job Title
-                    </label>
-                    <input
-                      type="text"
-                      value={jobTitle}
-                      onChange={e => setJobTitle(e.target.value)}
-                      placeholder="e.g. Senior React Developer"
-                      className="input-field text-sm"
-                    />
-                  </div>
-
-                  {/* Job description */}
-                  <div>
-                    <label className="block text-ink-400 text-xs font-medium mb-2 uppercase tracking-wide flex items-center justify-between">
-                      <span>Job Description *</span>
-                      <span className={`font-mono normal-case ${charColor}`}>{charCount} chars</span>
-                    </label>
-                    <textarea
-                      value={jobDesc}
-                      onChange={e => { setJobDesc(e.target.value); if (error) setError('') }}
-                      placeholder="Paste the full job description here. Include required skills, responsibilities, and qualifications…"
-                      rows={10}
-                      className="input-field text-sm resize-none"
-                    />
-                    {charCount < 50 && charCount > 0 && (
-                      <p className="text-red-400 text-xs mt-1">{50 - charCount} more characters needed</p>
-                    )}
-                  </div>
-
-                  {/* Error */}
-                  {error && (
-                    <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-950/50 border border-red-800/40 animate-scale-in">
-                      <AlertCircle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
-                      <p className="text-red-300 text-sm">{error}</p>
+                <CardContent>
+                  <form onSubmit={handleAnalyze} className="space-y-5">
+                    {/* Section 1: Resume Upload */}
+                    <div className="space-y-1.5">
+                      <label className="block text-sm font-medium text-foreground">
+                        Resume document <span className="text-destructive">*</span>
+                      </label>
+                      <DropZone file={file} onFileChange={setFile} />
                     </div>
-                  )}
 
-                  {/* Daily Limit Warning if exhausted */}
-                  {quota.trialsRemaining === 0 && (
-                    <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-800/40 text-xs text-amber-300 flex items-start gap-2.5 animate-scale-in">
-                      <AlertCircle size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <span className="font-semibold block text-amber-200">Daily Free Trials Limit Reached (5/5)</span>
-                        <span className="mt-0.5 block leading-relaxed text-ink-300">
-                          You have used all 5 analyses for today. Your daily trials will refresh tomorrow at midnight.
+                    {/* Section 2: Target Position Title */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label htmlFor="target-job-title" className="block text-sm font-medium text-foreground">
+                          Target job title
+                        </label>
+                        <span className="text-xs text-muted-foreground font-mono">Optional</span>
+                      </div>
+                      <Input
+                        id="target-job-title"
+                        type="text"
+                        placeholder="e.g. Senior Frontend Engineer"
+                        value={jobTitle}
+                        onChange={(e) => setJobTitle(e.target.value)}
+                        disabled={analyzing}
+                      />
+                    </div>
+
+                    {/* Section 3: Job Description */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label htmlFor="target-job-description" className="block text-sm font-medium text-foreground">
+                          Job description <span className="text-destructive">*</span>
+                        </label>
+                        <span className={`text-xs font-mono ${charCount > 0 && !isDescValid ? 'text-destructive' : 'text-muted-foreground'}`}>
+                          {charCount} chars {charCount > 0 && !isDescValid ? `(${50 - charCount} more needed)` : '(min. 50)'}
                         </span>
                       </div>
+                      <Textarea
+                        id="target-job-description"
+                        rows={8}
+                        placeholder="Paste the full job requirements, qualifications, and core responsibilities here…"
+                        value={jobDesc}
+                        onChange={(e) => {
+                          setJobDesc(e.target.value)
+                          if (error) setError('')
+                        }}
+                        disabled={analyzing}
+                        className="resize-none font-sans"
+                        required
+                      />
                     </div>
-                  )}
 
-                  {/* Submit */}
-                  <button type="submit" disabled={analyzing || quota.trialsRemaining === 0}
-                    className={`btn-volt w-full flex items-center justify-center gap-2.5 h-12 ${
-                      quota.trialsRemaining === 0 ? 'opacity-50 cursor-not-allowed saturate-50' : ''
-                    }`}>
-                    {analyzing ? (
-                      <>
-                        <Spinner size="sm" color="white" />
-                        <span className="font-display">Analyzing…</span>
-                      </>
-                    ) : quota.trialsRemaining === 0 ? (
-                      <>
-                        <AlertCircle size={16} />
-                        <span className="font-display">Daily Limit Reached (5/5 Used)</span>
-                      </>
-                    ) : (
-                      <>
-                        <Zap size={16} fill="currentColor" />
-                        <span className="font-display">Analyze Resume</span>
-                        <ChevronRight size={15} />
-                      </>
+                    {/* Inline Error Notice */}
+                    {error && (
+                      <div
+                        role="alert"
+                        aria-live="polite"
+                        className="p-3 rounded-badge bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-start gap-2.5 animate-scale-in"
+                      >
+                        <CircleAlert size={16} className="shrink-0 mt-0.5" />
+                        <span className="leading-snug">{error}</span>
+                      </div>
                     )}
-                  </button>
-                </form>
-              </div>
 
-              {/* Tips card */}
+                    {/* Exhausted Quota Notice */}
+                    {isQuotaExhausted && (
+                      <div
+                        role="alert"
+                        className="p-3.5 rounded-card bg-secondary/80 border border-border text-xs text-foreground space-y-1"
+                      >
+                        <div className="flex items-center gap-2 font-medium text-destructive">
+                          <CircleAlert size={15} />
+                          <span>Daily trial limit reached</span>
+                        </div>
+                        <p className="text-muted-foreground leading-relaxed">
+                          You have used all 5 analyses available for today. Your quota refreshes tomorrow at midnight.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Submit Action */}
+                    <Button
+                      type="submit"
+                      size="lg"
+                      loading={analyzing}
+                      disabled={analyzing || isQuotaExhausted || !file || !isDescValid}
+                      className="w-full"
+                    >
+                      <span>{analyzing ? 'Analyzing resume…' : 'Analyze resume'}</span>
+                      {!analyzing && <ArrowRight size={15} aria-hidden="true" />}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+
+              {/* Practical Guidance Card */}
               {!result && (
-                <div className="glass-card p-4 border-volt-400/10 bg-volt-400/3 animate-fade-up">
-                  <p className="section-label mb-2">Pro Tips</p>
-                  <ul className="space-y-1.5">
-                    {[
-                      'Use a clean, text-based PDF resume',
-                      'Paste the complete job description',
-                      'Include your skills section clearly',
-                    ].map((t, i) => (
-                      <li key={i} className="text-xs text-ink-400 flex items-start gap-2">
-                        <span className="text-volt-400 font-mono mt-0.5">→</span>
-                        {t}
-                      </li>
-                    ))}
+                <div className="rounded-card border border-border/70 bg-secondary/30 p-4 space-y-2.5">
+                  <p className="text-xs font-medium text-foreground">For best analysis results</p>
+                  <ul className="space-y-1.5 text-xs text-muted-foreground">
+                    <li className="flex items-start gap-2">
+                      <CheckCircle2 size={13} className="text-foreground shrink-0 mt-0.5" aria-hidden="true" />
+                      <span>Use text-based PDFs without scanned image text.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <CheckCircle2 size={13} className="text-foreground shrink-0 mt-0.5" aria-hidden="true" />
+                      <span>Paste the complete job description including qualifications and responsibilities.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <CheckCircle2 size={13} className="text-foreground shrink-0 mt-0.5" aria-hidden="true" />
+                      <span>Ensure standard section headings like Experience, Skills, and Education.</span>
+                    </li>
                   </ul>
                 </div>
               )}
             </div>
 
-            {/* ── Right: results ───────────────────────── */}
-            <div className="lg:col-span-3" id="results">
-              {analyzing && <AnalyzingPlaceholder />}
+            {/* ── Right Column: Results & Progress ──────────── */}
+            <div className="lg:col-span-7" id="results">
+              {analyzing && <AnalyzingProgress />}
 
-              {!analyzing && !result && !error && (
-                <EmptyState />
-              )}
+              {!analyzing && !result && !error && <EmptyWorkspaceState />}
 
               {!analyzing && !result && error && (
-                <div className="glass-card p-8 text-center animate-fade-in border-red-500/20 bg-red-500/5">
-                  <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-3">
-                    <AlertCircle size={22} className="text-red-400" />
+                <Card className="border-destructive/20 text-center p-8">
+                  <div className="w-12 h-12 rounded-[0.375rem] bg-destructive/10 border border-destructive/20 flex items-center justify-center mx-auto mb-3 text-destructive">
+                    <CircleAlert size={22} aria-hidden="true" />
                   </div>
-                  <h3 className="font-display font-600 text-ink-200 text-base mb-1">Analysis Error</h3>
-                  <p className="text-red-300 text-sm max-w-sm mx-auto leading-relaxed">{error}</p>
-                  <button
-                    onClick={() => setError('')}
-                    className="btn-ghost text-xs mt-4 px-3 py-1.5"
-                  >
+                  <CardTitle className="text-base text-foreground mb-1">
+                    Analysis could not be completed
+                  </CardTitle>
+                  <p className="text-muted-foreground text-sm max-w-sm mx-auto leading-relaxed mb-4">
+                    {error}
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => setError('')}>
                     Dismiss
-                  </button>
-                </div>
+                  </Button>
+                </Card>
               )}
 
               {!analyzing && result && (
@@ -360,42 +511,49 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* ════════════════════════════════════════════════ */}
-        {/* HISTORY TAB                                      */}
-        {/* ════════════════════════════════════════════════ */}
+        {/* ════════════════════════════════════════════════════ */}
+        {/* TAB: HISTORY                                         */}
+        {/* ════════════════════════════════════════════════════ */}
         {activeTab === 'history' && (
-          <div className="max-w-2xl">
+          <div className="max-w-3xl space-y-4">
             {historyLoading ? (
-              <div className="flex items-center justify-center py-20">
+              <div className="flex items-center justify-center py-24">
                 <Spinner size="lg" />
               </div>
             ) : history.length === 0 ? (
-              <div className="text-center py-20 animate-fade-up">
-                <div className="w-14 h-14 rounded-2xl bg-ink-800 flex items-center justify-center mx-auto mb-4">
-                  <History size={22} className="text-ink-500" />
+              <Card className="text-center p-12">
+                <div className="w-12 h-12 rounded-[0.375rem] bg-secondary border border-border flex items-center justify-center mx-auto mb-3 text-muted-foreground">
+                  <History size={20} aria-hidden="true" />
                 </div>
-                <p className="text-ink-400 text-sm">No analyses yet.</p>
-                <button onClick={() => setActiveTab('analyze')}
-                  className="btn-volt mt-4 flex items-center gap-2 mx-auto px-5 py-2.5 text-sm">
-                  <Zap size={14} fill="currentColor" />
-                  Run your first analysis
-                </button>
-              </div>
+                <CardTitle className="text-base mb-1">No past analyses</CardTitle>
+                <CardDescription className="max-w-xs mx-auto mb-4">
+                  Analyses you perform will be saved here so you can review match scores and skills gaps over time.
+                </CardDescription>
+                <Button variant="primary" size="sm" onClick={() => setActiveTab('analyze')}>
+                  Start your first analysis
+                </Button>
+              </Card>
             ) : (
-              <div className="space-y-2">
-                {history.map((item, i) => (
-                  <div key={item._id} style={{ animationDelay: `${i * 0.05}s` }}>
-                    <HistoryCard
-                      analysis={item}
-                      onDelete={(id) => setHistory(h => h.filter(a => a._id !== id))}
-                      onSelect={(a) => {
-                        setActiveTab('analyze')
-                        // Show the full result from history with all sections intact
-                        setResult(a)
-                        setTimeout(() => document.getElementById('results')?.scrollIntoView({ behavior: 'smooth' }), 100)
-                      }}
-                    />
-                  </div>
+              <div className="space-y-3">
+                {history.map((item) => (
+                  <HistoryCard
+                    key={item._id}
+                    analysis={item}
+                    onDelete={(id) => setHistory((h) => h.filter((a) => a._id !== id))}
+                    onSelect={(selectedItem) => {
+                      setActiveTab('analyze')
+                      if (selectedItem.status === 'failed') {
+                        setResult(null)
+                        setError(selectedItem.errorMessage || 'This analysis failed during processing.')
+                      } else {
+                        setError('')
+                        setResult(selectedItem)
+                      }
+                      setTimeout(() => {
+                        document.getElementById('results')?.scrollIntoView({ behavior: 'smooth' })
+                      }, 100)
+                    }}
+                  />
                 ))}
               </div>
             )}
@@ -406,63 +564,199 @@ export default function Dashboard() {
   )
 }
 
-// ── Loading placeholder during analysis ────────────────────
-function AnalyzingPlaceholder() {
-  const steps = [
-    'Extracting text from PDF…',
-    'Running NLP pipeline…',
-    'Matching skills against job description…',
-    'Calculating ATS score…',
-    'Generating suggestions…',
-  ]
-  const [step, setStep] = useState(0)
+// ── Lively Animated Analysis Progress ───────────────────────
+const ANALYSIS_STAGES = [
+  {
+    label: 'Extracting document text',
+    detail: 'Parsing PDF formatting, structure, and text content',
+  },
+  {
+    label: 'Analyzing credentials & layout',
+    detail: 'Detecting sections: experience, education, and technical competencies',
+  },
+  {
+    label: 'Running neural NLP embeddings',
+    detail: 'Generating semantic vector embeddings with all-MiniLM-L6-v2',
+  },
+  {
+    label: 'Evaluating skills & match requirements',
+    detail: 'Matching qualifications against target role requirements and detecting gaps',
+  },
+  {
+    label: 'Compiling 5-pillar ATS scorecard',
+    detail: 'Synthesizing scores, prioritized recommendations, and insights',
+  },
+]
+
+const ROTATING_TIPS = [
+  'Modern ATS algorithms evaluate semantic equivalence, recognizing related frameworks and skills beyond exact keywords.',
+  'Quantified impact (e.g. percentages, team scale, revenue metrics) substantially increases ATS ranking and score.',
+  'Standard headings like Experience, Skills, and Education ensure zero section skipping during parsing.',
+  'Skills gap analysis prioritizes high-impact requirements to help you target your resume improvements.',
+]
+
+function AnalyzingProgress() {
+  const [secondsElapsed, setSecondsElapsed] = useState(0)
+  const [tipIndex, setTipIndex] = useState(0)
 
   useEffect(() => {
-    const t = setInterval(() => setStep(s => Math.min(s + 1, steps.length - 1)), 1200)
-    return () => clearInterval(t)
+    const timer = setInterval(() => {
+      setSecondsElapsed((prev) => prev + 1)
+    }, 1000)
+    return () => clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    const tipTimer = setInterval(() => {
+      setTipIndex((prev) => (prev + 1) % ROTATING_TIPS.length)
+    }, 4500)
+    return () => clearInterval(tipTimer)
+  }, [])
+
+  // Calculate current stage dynamically based on seconds elapsed
+  const currentStageIndex =
+    secondsElapsed < 4
+      ? 0
+      : secondsElapsed < 9
+      ? 1
+      : secondsElapsed < 16
+      ? 2
+      : secondsElapsed < 23
+      ? 3
+      : 4
+
+  // Smoothly progressing percentage (15% -> 95%)
+  const progressPercent = Math.min(
+    95,
+    Math.round(15 + Math.min(secondsElapsed, 30) * 2.6)
+  )
+
   return (
-    <div className="glass-card p-10 flex flex-col items-center text-center animate-fade-in">
-      <div className="relative mb-6">
-        <div className="w-16 h-16 rounded-2xl bg-volt-400/10 border border-volt-400/20 flex items-center justify-center">
-          <Zap size={28} className="text-volt-400 animate-pulse-slow" fill="currentColor" />
+    <Card className="p-6 sm:p-8 shadow-lift border border-border/90 space-y-6 animate-scale-in">
+      {/* Header with active phase & elapsed time */}
+      <div className="flex items-center justify-between pb-4 border-b border-border/60">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-[0.375rem] bg-secondary border border-border flex items-center justify-center text-foreground shadow-well">
+            <LoaderCircle size={20} className="animate-spin text-primary" aria-hidden="true" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold text-primary">
+                Stage {currentStageIndex + 1} of 5 · Illustrative workflow
+              </span>
+              <span className="inline-block w-1 h-1 rounded-full bg-border" />
+              <span className="text-xs font-mono text-muted-foreground">{secondsElapsed}s elapsed</span>
+            </div>
+            <h3 className="font-sans text-base font-semibold text-foreground tracking-tight mt-0.5">
+              {ANALYSIS_STAGES[currentStageIndex].label}
+            </h3>
+          </div>
         </div>
-        <div className="absolute -inset-2 rounded-3xl border border-volt-400/10 animate-ping opacity-30" />
+
+        <Badge variant="secondary" className="font-mono text-xs px-2.5 py-1 hidden sm:inline-flex">
+          {progressPercent}%
+        </Badge>
       </div>
-      <h3 className="font-display font-700 text-ink-100 text-lg mb-2">Analyzing Your Resume</h3>
-      <p className="text-volt-400 text-sm font-mono mb-8 h-5 transition-all">{steps[step]}</p>
-      <div className="w-full max-w-xs space-y-2">
-        {steps.map((s, i) => (
-          <div key={i} className={`h-1.5 rounded-full transition-all duration-700 ${i <= step ? 'bg-volt-400' : 'bg-ink-800'}`}
-            style={{ width: i <= step ? '100%' : `${20 + i * 15}%`, opacity: i <= step ? 1 : 0.3 }} />
-        ))}
+
+      {/* Dynamic Animated Progress Bar */}
+      <div className="space-y-1.5">
+        <div className="h-2 w-full bg-secondary rounded-cell overflow-hidden border border-border/50">
+          <div
+            className="bg-primary h-full rounded-cell transition-all duration-700 ease-out"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+        <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground px-0.5">
+          <span className="truncate">{ANALYSIS_STAGES[currentStageIndex].detail}</span>
+          <span className="shrink-0 ml-2 sm:hidden">{progressPercent}%</span>
+        </div>
       </div>
-    </div>
+
+      {/* Illustrative Pipeline Stage Sequence */}
+      <div className="space-y-2 pt-1">
+        {ANALYSIS_STAGES.map((stage, idx) => {
+          const isCurrent = idx === currentStageIndex
+          return (
+            <div
+              key={stage.label}
+              className={`flex items-center gap-3 p-2.5 rounded-badge border text-xs transition-colors duration-200 ${
+                isCurrent
+                  ? 'bg-secondary/70 border-primary/40 text-foreground font-medium shadow-well'
+                  : 'bg-card/50 border-border/50 text-muted-foreground'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[10px] font-mono font-medium ${
+                  isCurrent
+                    ? 'bg-primary text-primary-foreground font-bold shadow-sm'
+                    : 'bg-secondary border border-border/70 text-muted-foreground'
+                }`}
+              >
+                {isCurrent ? (
+                  <LoaderCircle size={11} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  idx + 1
+                )}
+              </div>
+              <span className={`flex-1 truncate ${isCurrent ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
+                {stage.label}
+              </span>
+              <span className={`text-[10px] font-mono uppercase ${isCurrent ? 'text-primary font-semibold animate-pulse' : 'text-muted-foreground/60'}`}>
+                {isCurrent ? 'Processing…' : `Stage ${idx + 1}`}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Illustrative Workflow Disclaimer Notice */}
+      <div className="p-3 bg-secondary/30 rounded-card border border-border/50 text-[11px] text-muted-foreground leading-normal">
+        Note: The NLP engine executes parsing, vector embeddings, and scoring asynchronously. Stages represent standard pipeline workflow; results render automatically upon completion.
+      </div>
+
+      {/* Dynamic Rotating ATS Insight */}
+      <div className="p-3.5 bg-secondary/40 rounded-card border border-border/60 flex items-start gap-2.5">
+        <Lightbulb size={16} className="text-foreground shrink-0 mt-0.5" aria-hidden="true" />
+        <p className="text-xs text-muted-foreground leading-relaxed transition-opacity duration-300">
+          {ROTATING_TIPS[tipIndex]}
+        </p>
+      </div>
+    </Card>
   )
 }
 
-// ── Empty state before first analysis ──────────────────────
-function EmptyState() {
+// ── Empty Workspace State ────────────────────────────────────
+function EmptyWorkspaceState() {
+  const workflowSteps = [
+    { num: '1', title: 'Upload resume', desc: 'Select your PDF file' },
+    { num: '2', title: 'Target job', desc: 'Paste the job requirements' },
+    { num: '3', title: 'ATS breakdown', desc: 'Review match score & gaps' },
+  ]
+
   return (
-    <div className="glass-card p-10 flex flex-col items-center text-center animate-fade-in">
-      <div className="w-16 h-16 rounded-2xl bg-ink-800 flex items-center justify-center mb-5">
-        <Briefcase size={26} className="text-ink-500" />
+    <Card className="p-8 sm:p-12 text-center shadow-lift border border-border/80 space-y-6">
+      <div className="w-12 h-12 rounded-[0.375rem] bg-secondary border border-border flex items-center justify-center mx-auto shadow-well text-muted-foreground">
+        <FileText size={22} aria-hidden="true" />
       </div>
-      <h3 className="font-display font-600 text-ink-300 text-base mb-2">No Analysis Yet</h3>
-      <p className="text-ink-500 text-sm max-w-xs leading-relaxed">
-        Upload your resume and paste a job description to get your ATS compatibility score with matched and missing skills.
-      </p>
-      <div className="mt-6 grid grid-cols-3 gap-4 w-full max-w-xs">
-        {['Upload PDF', 'Paste JD', 'Get Score'].map((step, i) => (
-          <div key={i} className="flex flex-col items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-ink-800 border border-ink-700 flex items-center justify-center">
-              <span className="font-mono text-xs text-ink-400">{i + 1}</span>
-            </div>
-            <span className="text-ink-600 text-xs">{step}</span>
+
+      <div className="space-y-1.5 max-w-sm mx-auto">
+        <h3 className="font-sans text-base font-semibold text-foreground tracking-tight">
+          Awaiting input
+        </h3>
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          Upload your resume on the left and enter the job description to run an ATS evaluation.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-md mx-auto pt-2">
+        {workflowSteps.map((s) => (
+          <div key={s.num} className="p-3 rounded-badge bg-secondary/40 border border-border/50 text-left space-y-1">
+            <span className="font-mono text-xs font-semibold text-foreground">{s.num}.</span>
+            <p className="text-xs font-medium text-foreground">{s.title}</p>
+            <p className="text-[11px] text-muted-foreground leading-normal">{s.desc}</p>
           </div>
         ))}
       </div>
-    </div>
+    </Card>
   )
 }
