@@ -26,6 +26,10 @@ const userDailyQuotaSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    refundedAnalyses: {
+      type: [String],
+      default: [],
+    },
   },
   {
     timestamps: true,
@@ -196,20 +200,24 @@ const getDailyQuotaUsage = async (userId, date = new Date(), limit = DAILY_LIMIT
 
 /**
  * Atomically refunds 1 quota slot when an analysis fails terminally.
- * Decrements count strictly if count > 0.
+ * Uses analysisId deduplication to guarantee idempotent refunds:
+ * Replaying failure events or concurrent handlers cannot refund the same analysis twice.
  */
-const refundFailedAnalysisQuota = async (userId, date = new Date()) => {
-  if (!userId) return null;
+const refundFailedAnalysisQuota = async (userId, analysisId, date = new Date()) => {
+  if (!userId || !analysisId) return null;
   const UserDailyQuota = mongoose.model('UserDailyQuota');
   const dateKey = getLocalDateKey(date);
+  const analysisIdStr = analysisId.toString();
 
   return await UserDailyQuota.findOneAndUpdate(
     {
       user: userId,
       dateKey,
+      refundedAnalyses: { $ne: analysisIdStr },
       count: { $gt: 0 },
     },
     {
+      $push: { refundedAnalyses: analysisIdStr },
       $inc: { count: -1 },
     },
     {

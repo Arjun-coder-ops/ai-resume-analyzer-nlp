@@ -219,10 +219,15 @@ export default function Dashboard() {
       formData.append('jobDescription', jobDesc.trim())
       formData.append('jobTitle', jobTitle.trim() || 'Untitled Position')
 
-      const idempotencyKey =
-        typeof crypto !== 'undefined' && crypto.randomUUID
-          ? crypto.randomUUID()
-          : `idem_${Date.now()}_${Math.random().toString(36).substring(2)}`
+      // Deterministically derive idempotency key from logical submission payload:
+      // Same file + same jobTitle + same jobDescription => identical key across retries and repeated clicks
+      // Modifying any input field or uploading a different file => brand new key
+      const payloadSignature = `${file.name}_${file.size}_${file.lastModified}_${jobTitle.trim()}_${jobDesc.trim()}`
+      let sigHash = 0
+      for (let i = 0; i < payloadSignature.length; i++) {
+        sigHash = ((sigHash << 5) - sigHash + payloadSignature.charCodeAt(i)) | 0
+      }
+      const idempotencyKey = `sub_${file.size}_${Math.abs(sigHash).toString(36)}`
 
       const { data } = await api.post('/analyze', formData, {
         headers: {

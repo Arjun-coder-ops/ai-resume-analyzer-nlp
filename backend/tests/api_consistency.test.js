@@ -1223,8 +1223,9 @@ describe('API State Consistency & Security Ownership Tests', () => {
     expect(usageAfterCommit.trialsUsed).toBe(1);
     expect(usageAfterCommit.trialsRemaining).toBe(4);
 
-    // 4. Trigger refundFailedAnalysisQuota
-    await UserDailyQuota.refundFailedAnalysisQuota(testUser._id);
+    // 4. Trigger refundFailedAnalysisQuota with analysisId
+    const analysisId = new mongoose.Types.ObjectId();
+    await UserDailyQuota.refundFailedAnalysisQuota(testUser._id, analysisId);
 
     const usageAfterRefund = await UserDailyQuota.getDailyQuotaUsage(testUser._id);
     expect(usageAfterRefund.trialsUsed).toBe(0);
@@ -1266,6 +1267,103 @@ describe('API State Consistency & Security Ownership Tests', () => {
     expect(res.body.success).toBe(false);
     expect(res.body.errorType).toBe('DAILY_QUOTA_EXHAUSTED');
     expect(res.body.trialsRemaining).toBe(0);
+  });
+
+  // ── TEST 36: Idempotent Quota Refund (Replaying Failure Event Cannot Double-Refund) ──
+  test('36. Replaying a failure event cannot refund the same analysis twice', async () => {
+    const testUser = await User.create({
+      name: 'Replay Refund User',
+      email: `test_consistency_replay_${Date.now()}@example.com`,
+      password: 'password123',
+    });
+
+    const res = await UserDailyQuota.reserveDailyQuota(testUser._id);
+    await UserDailyQuota.commitDailyQuota(testUser._id, res.reservationId);
+
+    const initialUsage = await UserDailyQuota.getDailyQuotaUsage(testUser._id);
+    expect(initialUsage.trialsUsed).toBe(1);
+
+    const failedAnalysisId = new mongoose.Types.ObjectId();
+
+    // First refund call succeeds
+    const firstRefund = await UserDailyQuota.refundFailedAnalysisQuota(testUser._id, failedAnalysisId);
+    expect(firstRefund).not.toBeNull();
+    expect(firstRefund.count).toBe(0);
+
+    const afterFirst = await UserDailyQuota.getDailyQuotaUsage(testUser._id);
+    expect(afterFirst.trialsUsed).toBe(0);
+
+    // Second refund call with the same analysisId is rejected as duplicate (no double refund!)
+    const secondRefund = await UserDailyQuota.refundFailedAnalysisQuota(testUser._id, failedAnalysisId);
+    expect(secondRefund).toBeNull();
+
+    const afterSecond = await UserDailyQuota.getDailyQuotaUsage(testUser._id);
+    expect(afterSecond.trialsUsed).toBe(0);
+    expect(afterSecond.trialsRemaining).toBe(5);
+  });
+
+  // ── TEST 37: Stale Failure Event Cannot Refund or Overwrite Completed Analysis ──
+  test('37. Stale failure webhook cannot refund or overwrite a completed analysis', async () => {
+    const completedAnalysis = await Analysis.create({
+      user: userA._id,
+      resumeFilename: 'completed_stale.pdf',
+      resumeOriginalName: 'CompletedStale.pdf',
+      jobTitle: 'TestConsistency - Completed Safe Role',
+      jobDescription: 'Job description for completed safe role with sufficient characters.',
+      status: 'completed',
+      score: 92,
+    });
+
+    const quotaBefore = await UserDailyQuota.getDailyQuotaUsage(userA._id);
+
+    // Attempt to post a failure webhook for the completed analysis
+    const res = await request(app)
+      .post(`/api/analyze/webhook/${completedAnalysis._id}`)
+      .set('x-internal-token', process.env.INTERNAL_NLP_TOKEN || 'test_internal_token_secret')
+      .send({
+        status: 'failed',
+        error: 'Late arrival failure message',
+      });
+
+    expect(res.statusCode).toBe(200);
+
+    // Verify analysis remains completed
+    const record = await Analysis.findById(completedAnalysis._id);
+    expect(record.status).toBe('completed');
+    expect(record.score).toBe(92);
+
+    // Verify quota did not change
+    const quotaAfter = await UserDailyQuota.getDailyQuotaUsage(userA._id);
+    expect(quotaAfter.trialsUsed).toBe(quotaBefore.trialsUsed);
+  });
+
+  // ── TEST 38: Idempotency Key with Mismatched Request Payload Returns 409 Conflict ──
+  test('38. Idempotency key with mismatched request payload is rejected with 409 Conflict', async () => {
+    const idempotencyKey = `idem_payload_${Date.now()}`;
+
+    // Initial analysis
+    await Analysis.create({
+      user: userA._id,
+      resumeFilename: 'initial_doc.pdf',
+      resumeOriginalName: 'InitialDoc.pdf',
+      jobTitle: 'TestConsistency - Initial Role',
+      jobDescription: 'Initial job description with at least 50 characters to pass validation checks cleanly.',
+      status: 'processing',
+      idempotencyKey,
+    });
+
+    // Submit with SAME idempotency key but DIFFERENT job description
+    const res = await request(app)
+      .post('/api/analyze')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .set('idempotency-key', idempotencyKey)
+      .field('jobTitle', 'TestConsistency - Mismatched Role')
+      .field('jobDescription', 'Completely different job description with at least 50 characters to pass validation.')
+      .attach('resume', Buffer.from('%PDF-1.4 dummy resume'), 'InitialDoc.pdf');
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toMatch(/different request payload/i);
   });
 });
 

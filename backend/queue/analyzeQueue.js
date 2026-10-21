@@ -98,7 +98,7 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
       { new: true }
     );
     if (failDoc?.user) {
-      await UserDailyQuota.refundFailedAnalysisQuota(failDoc.user, failDoc.createdAt);
+      await UserDailyQuota.refundFailedAnalysisQuota(failDoc.user, failDoc._id, failDoc.createdAt);
     }
     throw err;
   }
@@ -299,7 +299,7 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
         if (failUpdated) {
           safeUnlink(resumePath);
           if (failUpdated.user) {
-            await UserDailyQuota.refundFailedAnalysisQuota(failUpdated.user, failUpdated.createdAt);
+            await UserDailyQuota.refundFailedAnalysisQuota(failUpdated.user, failUpdated._id, failUpdated.createdAt);
           }
         } else {
           console.warn(`[Queue Worker] Failure for attempt ${attempt} ignored because job was claimed or completed by another attempt.`);
@@ -640,7 +640,7 @@ const reconcileStaleJobs = async (staleThresholdMs = 5 * 60 * 1000) => {
       if (updated) {
         reconciledCount++;
         if (updated.user) {
-          await UserDailyQuota.refundFailedAnalysisQuota(updated.user, updated.createdAt);
+          await UserDailyQuota.refundFailedAnalysisQuota(updated.user, updated._id, updated.createdAt);
         }
         // Clean up orphan file if it still exists on disk
         const targetFilename = updated.resumeFilename || analysis.resumeFilename;

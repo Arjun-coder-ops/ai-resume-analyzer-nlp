@@ -65,6 +65,18 @@ const analyzeResume = async (req, res) => {
       ) {
         await Analysis.deleteOne({ _id: existingByIdempotency._id });
       } else {
+        // Verify request payload matches the original submission (job description)
+        const isSamePayload =
+          existingByIdempotency.jobDescription === jobDescription.trim();
+
+        if (!isSamePayload) {
+          safeUnlink(req.file.path);
+          return res.status(409).json({
+            success: false,
+            message: 'Idempotency key was previously used with a different request payload.',
+          });
+        }
+
         safeUnlink(req.file.path);
         return res.json({
           success: true,
@@ -146,6 +158,16 @@ const analyzeResume = async (req, res) => {
       });
 
       if (existingAnalysis) {
+        const isSamePayload =
+          existingAnalysis.jobDescription === jobDescription.trim();
+
+        if (!isSamePayload) {
+          return res.status(409).json({
+            success: false,
+            message: 'Idempotency key was previously used with a different request payload.',
+          });
+        }
+
         return res.json({
           success: true,
           message: 'Analysis already initiated (idempotent request).',
@@ -292,7 +314,7 @@ const handleWebhook = async (req, res) => {
       }
 
       if (updated.user) {
-        await UserDailyQuota.refundFailedAnalysisQuota(updated.user, updated.createdAt);
+        await UserDailyQuota.refundFailedAnalysisQuota(updated.user, updated._id, updated.createdAt);
       }
 
       return res.json({ success: true, message: 'Failure webhook processed' });
