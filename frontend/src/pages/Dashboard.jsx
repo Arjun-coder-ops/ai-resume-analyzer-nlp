@@ -61,6 +61,7 @@ export default function Dashboard() {
           sessionStorage.removeItem('resumeiq_active_analysis')
           setResult(analysis)
           setAnalyzing(false)
+          setHistory((prev) => [analysis, ...prev.filter((item) => item._id !== analysis._id)])
           loadHistory()
           loadQuota()
           setTimeout(() => {
@@ -70,6 +71,7 @@ export default function Dashboard() {
           sessionStorage.removeItem('resumeiq_active_analysis')
           setError(analysis.errorMessage || 'AI analysis failed during processing.')
           setAnalyzing(false)
+          setHistory((prev) => [analysis, ...prev.filter((item) => item._id !== analysis._id)])
           loadQuota()
           loadHistory()
         } else {
@@ -141,6 +143,13 @@ export default function Dashboard() {
       }
     }
   }, [pollAnalysis])
+
+  // ── Refresh History on Tab Navigation ─────────────────────
+  useEffect(() => {
+    if (activeTab === 'history') {
+      loadHistory()
+    }
+  }, [activeTab])
 
   // ── Load Quota from Backend ────────────────────────────────
   const loadQuota = async () => {
@@ -221,6 +230,7 @@ export default function Dashboard() {
         // Synchronous completion fallback
         setResult(jobData)
         setAnalyzing(false)
+        setHistory((prev) => [jobData, ...prev.filter((item) => item._id !== jobData._id)])
         loadHistory()
         loadQuota()
         setTimeout(() => {
@@ -231,6 +241,16 @@ export default function Dashboard() {
         const analysisId = jobData?.analysisId || jobData?._id
         if (analysisId) {
           sessionStorage.setItem('resumeiq_active_analysis', analysisId)
+          setHistory((prev) => [
+            {
+              _id: analysisId,
+              jobTitle: jobTitle.trim() || 'Untitled Position',
+              resumeOriginalName: file?.name || 'Resume.pdf',
+              status: 'processing',
+              createdAt: new Date().toISOString(),
+            },
+            ...prev.filter((item) => item._id !== analysisId),
+          ])
           pollAnalysis(analysisId, 1)
         } else {
           setError('Analysis initiated but missing reference ID.')
@@ -328,7 +348,10 @@ export default function Dashboard() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('history')}
+              onClick={() => {
+                setActiveTab('history')
+                loadHistory()
+              }}
               className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium border-b-2 -mb-px transition-colors duration-150 ${
                 activeTab === 'history'
                   ? 'border-primary text-foreground'
@@ -545,6 +568,12 @@ export default function Dashboard() {
                       if (selectedItem.status === 'failed') {
                         setResult(null)
                         setError(selectedItem.errorMessage || 'This analysis failed during processing.')
+                      } else if (selectedItem.status === 'processing' || selectedItem.status === 'queued' || selectedItem.status === 'pending') {
+                        setResult(null)
+                        setError('')
+                        setAnalyzing(true)
+                        sessionStorage.setItem('resumeiq_active_analysis', selectedItem._id)
+                        pollAnalysis(selectedItem._id, 1)
                       } else {
                         setError('')
                         setResult(selectedItem)

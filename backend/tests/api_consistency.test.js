@@ -1128,4 +1128,66 @@ describe('API State Consistency & Security Ownership Tests', () => {
     expect(correctedIndex.unique).toBe(true);
     expect(isCorrectUniquePartialIndex(correctedIndex)).toBe(true);
   });
+
+  // ── TEST 33: Regression Test for Fix A: History persistence and status inclusion ──
+  test('33. History endpoint reliably returns completed and in-progress analyses for user in newest-first order', async () => {
+    // 1. Create older in-progress analysis
+    const inProgressAnalysis = await Analysis.create({
+      user: userA._id,
+      resumeFilename: 'progress_test.pdf',
+      resumeOriginalName: 'ProgressResume.pdf',
+      jobTitle: 'TestConsistency - In Progress Role',
+      jobDescription: 'Job description for in progress role testing with sufficient length.',
+      status: 'processing',
+      createdAt: new Date(Date.now() - 5000),
+    });
+
+    // 2. Create newer completed analysis with full scorecard
+    const completedAnalysis = await Analysis.create({
+      user: userA._id,
+      resumeFilename: 'completed_test.pdf',
+      resumeOriginalName: 'CompletedResume.pdf',
+      jobTitle: 'TestConsistency - Completed Senior Role',
+      jobDescription: 'Job description for completed role testing with sufficient length.',
+      status: 'completed',
+      score: 87,
+      matchLevel: 'Strong Match',
+      scoringBreakdown: {
+        skillsScore: 85,
+        experienceScore: 90,
+        educationScore: 80,
+      },
+      createdAt: new Date(),
+    });
+
+    // 3. Fetch history list
+    const res = await request(app)
+      .get('/api/history')
+      .set('Authorization', `Bearer ${tokenA}`);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
+
+    const historyIds = res.body.data.map((item) => item._id.toString());
+    expect(historyIds).toContain(completedAnalysis._id.toString());
+    expect(historyIds).toContain(inProgressAnalysis._id.toString());
+
+    // Verify newest first order
+    const completedIdx = historyIds.indexOf(completedAnalysis._id.toString());
+    const inProgressIdx = historyIds.indexOf(inProgressAnalysis._id.toString());
+    expect(completedIdx).toBeLessThan(inProgressIdx);
+
+    // 4. Verify single record retrieval matches results page requirements
+    const detailRes = await request(app)
+      .get(`/api/history/${completedAnalysis._id}`)
+      .set('Authorization', `Bearer ${tokenA}`);
+
+    expect(detailRes.statusCode).toBe(200);
+    expect(detailRes.body.data.status).toBe('completed');
+    expect(detailRes.body.data.score).toBe(87);
+    expect(detailRes.body.data.matchLevel).toBe('Strong Match');
+    expect(detailRes.body.data.scoringBreakdown.skillsScore).toBe(85);
+  });
 });
+

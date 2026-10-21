@@ -15,12 +15,12 @@ const getHistory = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const [analyses, total] = await Promise.all([
-      Analysis.find({ user: req.user._id, status: { $in: ['completed', 'failed'] } })
+      Analysis.find({ user: req.user._id })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .select('-jobDescription'), // Exclude heavy field from list
-      Analysis.countDocuments({ user: req.user._id, status: { $in: ['completed', 'failed'] } }),
+      Analysis.countDocuments({ user: req.user._id }),
     ]);
 
     res.json({
