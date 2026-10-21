@@ -219,8 +219,16 @@ export default function Dashboard() {
       formData.append('jobDescription', jobDesc.trim())
       formData.append('jobTitle', jobTitle.trim() || 'Untitled Position')
 
+      const idempotencyKey =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `idem_${Date.now()}_${Math.random().toString(36).substring(2)}`
+
       const { data } = await api.post('/analyze', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Idempotency-Key': idempotencyKey,
+        },
       })
 
       loadQuota()

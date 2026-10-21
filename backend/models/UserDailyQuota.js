@@ -68,9 +68,10 @@ const reserveDailyQuota = async (userId, date = new Date(), limit = DAILY_LIMIT)
   const { startOfDay, endOfDay } = getLocalDayBounds(date);
   const reservationId = new mongoose.Types.ObjectId().toString();
 
-  // 1. Ensure document exists. If creating for the first time today, seed with count of any existing analyses.
+  // 1. Ensure document exists. If creating for the first time today, seed with count of non-failed analyses.
   const existingTodayAnalyses = await Analysis.countDocuments({
     user: userId,
+    status: { $ne: 'failed' },
     createdAt: { $gte: startOfDay, $lt: endOfDay },
   });
 
@@ -171,6 +172,7 @@ const getDailyQuotaUsage = async (userId, date = new Date(), limit = DAILY_LIMIT
   if (!quotaDoc) {
     const existingCount = await Analysis.countDocuments({
       user: userId,
+      status: { $ne: 'failed' },
       createdAt: { $gte: startOfDay, $lt: endOfDay },
     });
 
@@ -192,6 +194,30 @@ const getDailyQuotaUsage = async (userId, date = new Date(), limit = DAILY_LIMIT
   };
 };
 
+/**
+ * Atomically refunds 1 quota slot when an analysis fails terminally.
+ * Decrements count strictly if count > 0.
+ */
+const refundFailedAnalysisQuota = async (userId, date = new Date()) => {
+  if (!userId) return null;
+  const UserDailyQuota = mongoose.model('UserDailyQuota');
+  const dateKey = getLocalDateKey(date);
+
+  return await UserDailyQuota.findOneAndUpdate(
+    {
+      user: userId,
+      dateKey,
+      count: { $gt: 0 },
+    },
+    {
+      $inc: { count: -1 },
+    },
+    {
+      new: true,
+    }
+  );
+};
+
 const UserDailyQuota = mongoose.model('UserDailyQuota', userDailyQuotaSchema);
 
 module.exports = UserDailyQuota;
@@ -202,3 +228,4 @@ module.exports.reserveDailyQuota = reserveDailyQuota;
 module.exports.commitDailyQuota = commitDailyQuota;
 module.exports.rollbackDailyQuota = rollbackDailyQuota;
 module.exports.getDailyQuotaUsage = getDailyQuotaUsage;
+module.exports.refundFailedAnalysisQuota = refundFailedAnalysisQuota;

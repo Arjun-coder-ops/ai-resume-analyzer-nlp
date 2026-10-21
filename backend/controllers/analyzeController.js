@@ -112,6 +112,7 @@ const analyzeResume = async (req, res) => {
     const quotaUsage = await UserDailyQuota.getDailyQuotaUsage(req.user._id);
     return res.status(429).json({
       success: false,
+      errorType: 'DAILY_QUOTA_EXHAUSTED',
       message: `Daily limit reached. You have used all ${DAILY_LIMIT} free analyses for today. Your quota resets tomorrow at midnight.`,
       dailyLimit: DAILY_LIMIT,
       trialsUsed: quotaUsage.trialsUsed,
@@ -288,6 +289,10 @@ const handleWebhook = async (req, res) => {
           return res.json({ success: true, message: 'Ignored stale failure webhook for completed analysis' });
         }
         return res.json({ success: true, message: `Analysis is already in ${current.status} state` });
+      }
+
+      if (updated.user) {
+        await UserDailyQuota.refundFailedAnalysisQuota(updated.user, updated.createdAt);
       }
 
       return res.json({ success: true, message: 'Failure webhook processed' });

@@ -1189,5 +1189,83 @@ describe('API State Consistency & Security Ownership Tests', () => {
     expect(detailRes.body.data.matchLevel).toBe('Strong Match');
     expect(detailRes.body.data.scoringBreakdown.skillsScore).toBe(85);
   });
+
+  // ── TEST 34: Regression Test for Fix B: Failed analyses do not consume daily quota ──
+  test('34. Failed analyses do not count against daily quota and are refunded on terminal failure', async () => {
+    const testUser = await User.create({
+      name: 'Quota Refund User',
+      email: `test_consistency_refund_${Date.now()}@example.com`,
+      password: 'password123',
+    });
+
+    // 1. Create a failed analysis document for today
+    await Analysis.create({
+      user: testUser._id,
+      resumeFilename: 'failed_refund.pdf',
+      resumeOriginalName: 'FailedRefund.pdf',
+      jobTitle: 'TestConsistency - Failed Quota Role',
+      jobDescription: 'Job description for failed quota testing with sufficient length.',
+      status: 'failed',
+      createdAt: new Date(),
+    });
+
+    // 2. Daily quota usage should ignore the failed analysis and report 0 used, 5 remaining
+    const usage = await UserDailyQuota.getDailyQuotaUsage(testUser._id);
+    expect(usage.trialsUsed).toBe(0);
+    expect(usage.trialsRemaining).toBe(5);
+
+    // 3. Reserving quota increments count to 1
+    const reservation = await UserDailyQuota.reserveDailyQuota(testUser._id);
+    expect(reservation).not.toBeNull();
+    await UserDailyQuota.commitDailyQuota(testUser._id, reservation.reservationId);
+
+    const usageAfterCommit = await UserDailyQuota.getDailyQuotaUsage(testUser._id);
+    expect(usageAfterCommit.trialsUsed).toBe(1);
+    expect(usageAfterCommit.trialsRemaining).toBe(4);
+
+    // 4. Trigger refundFailedAnalysisQuota
+    await UserDailyQuota.refundFailedAnalysisQuota(testUser._id);
+
+    const usageAfterRefund = await UserDailyQuota.getDailyQuotaUsage(testUser._id);
+    expect(usageAfterRefund.trialsUsed).toBe(0);
+    expect(usageAfterRefund.trialsRemaining).toBe(5);
+  });
+
+  // ── TEST 35: Regression Test for Fix B: Legitimate quota enforcement at 5 analyses ──
+  test('35. Legitimate quota limit of 5 is strictly enforced and returns 429 DAILY_QUOTA_EXHAUSTED', async () => {
+    const testUser = await User.create({
+      name: 'Exhausted Quota User',
+      email: `test_consistency_exhaust_${Date.now()}@example.com`,
+      password: 'password123',
+    });
+
+    const token = jwt.sign({ id: testUser._id }, process.env.JWT_SECRET || 'secret123', {
+      expiresIn: '1h',
+    });
+
+    // Reserve and commit 5 legitimate slots
+    for (let i = 0; i < 5; i++) {
+      const res = await UserDailyQuota.reserveDailyQuota(testUser._id);
+      expect(res).not.toBeNull();
+      await UserDailyQuota.commitDailyQuota(testUser._id, res.reservationId);
+    }
+
+    const quotaBefore = await UserDailyQuota.getDailyQuotaUsage(testUser._id);
+    expect(quotaBefore.trialsUsed).toBe(5);
+    expect(quotaBefore.trialsRemaining).toBe(0);
+
+    // 6th analysis request should be rejected with 429
+    const res = await request(app)
+      .post('/api/analyze')
+      .set('Authorization', `Bearer ${token}`)
+      .field('jobTitle', 'TestConsistency - Over Quota Role')
+      .field('jobDescription', 'Job description for over quota testing with at least fifty characters.')
+      .attach('resume', Buffer.from('%PDF-1.4 dummy resume'), 'Test.pdf');
+
+    expect(res.statusCode).toBe(429);
+    expect(res.body.success).toBe(false);
+    expect(res.body.errorType).toBe('DAILY_QUOTA_EXHAUSTED');
+    expect(res.body.trialsRemaining).toBe(0);
+  });
 });
 

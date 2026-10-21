@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const FormData = require('form-data');
 const Analysis = require('../models/Analysis');
+const UserDailyQuota = require('../models/UserDailyQuota');
 
 // Controlled settings
 const QUEUE_CONCURRENCY = parseInt(process.env.QUEUE_CONCURRENCY || '1', 10);
@@ -86,15 +87,19 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
   if (!resumePath || !fs.existsSync(resumePath)) {
     const err = new Error(`Resume file not found at ${resumePath}`);
     err.isTerminal = true;
-    await Analysis.findOneAndUpdate(
+    const failDoc = await Analysis.findOneAndUpdate(
       { _id: analysisId, status: { $in: ['processing', 'queued', 'pending'] } },
       {
         $set: {
           status: 'failed',
           errorMessage: 'Resume document could not be accessed. Please upload your document again.',
         },
-      }
+      },
+      { new: true }
     );
+    if (failDoc?.user) {
+      await UserDailyQuota.refundFailedAnalysisQuota(failDoc.user, failDoc.createdAt);
+    }
     throw err;
   }
 
@@ -293,6 +298,9 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
 
         if (failUpdated) {
           safeUnlink(resumePath);
+          if (failUpdated.user) {
+            await UserDailyQuota.refundFailedAnalysisQuota(failUpdated.user, failUpdated.createdAt);
+          }
         } else {
           console.warn(`[Queue Worker] Failure for attempt ${attempt} ignored because job was claimed or completed by another attempt.`);
         }
@@ -631,6 +639,9 @@ const reconcileStaleJobs = async (staleThresholdMs = 5 * 60 * 1000) => {
 
       if (updated) {
         reconciledCount++;
+        if (updated.user) {
+          await UserDailyQuota.refundFailedAnalysisQuota(updated.user, updated.createdAt);
+        }
         // Clean up orphan file if it still exists on disk
         const targetFilename = updated.resumeFilename || analysis.resumeFilename;
         if (targetFilename) {
