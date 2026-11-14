@@ -1,0 +1,10 @@
+# Local environments and generated caches must never become image inputs.
+venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Runtime secrets and generated benchmark artifacts stay on the host.
+.env
+baseline_results.json
+final_benchmark_results.json

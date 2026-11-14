@@ -6,6 +6,7 @@ const UserDailyQuota = require('../models/UserDailyQuota');
 const { DAILY_LIMIT } = UserDailyQuota;
 const analyzeQueue = require('../queue/analyzeQueue');
 const { safeUnlink } = analyzeQueue;
+const { documentStorage } = require('../services/documentStorage');
 
 /**
  * Timing-safe string comparison to prevent side-channel timing attacks.
@@ -134,6 +135,16 @@ const analyzeResume = async (req, res) => {
 
   const { reservationId } = quotaReservation;
 
+  try {
+    await documentStorage.persistUpload(req.file.filename, req.file.path);
+    if (documentStorage.isRemote) fs.unlinkSync(req.file.path);
+  } catch (storageError) {
+    console.error('Document persistence error:', storageError.message);
+    await UserDailyQuota.rollbackDailyQuota(req.user._id, reservationId);
+    safeUnlink(req.file.path);
+    return res.status(503).json({ success: false, message: 'Resume storage is temporarily unavailable. Please try again.' });
+  }
+
   // ── Create analysis record with "processing" status ─────
   let analysis;
   try {
@@ -194,6 +205,7 @@ const analyzeResume = async (req, res) => {
 
     await analyzeQueue.enqueueAnalysis({
       analysisId: analysis._id.toString(),
+      resumeKey: req.file.filename,
       resumePath: req.file.path,
       resumeOriginalName: req.file.originalname,
       jobDescription: jobDescription.trim(),

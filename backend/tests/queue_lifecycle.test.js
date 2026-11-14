@@ -97,9 +97,10 @@ describe('Background Job Lifecycle & State Consistency Tests', () => {
       },
     });
 
+    const persistedResumePath = createTempPdf();
     const result = await processAnalysisJob({
       analysisId: analysis._id.toString(),
-      resumePath: createTempPdf(),
+      resumePath: persistedResumePath,
       resumeOriginalName: 'TestResume.pdf',
       jobDescription: analysis.jobDescription,
     });
@@ -113,6 +114,9 @@ describe('Background Job Lifecycle & State Consistency Tests', () => {
     expect(updated.scoringBreakdown.skills_match.score).toBe(34);
     expect(updated.matchedSkills).toContain('React');
     expect(updated.errorMessage).toBeNull();
+    // BUG-001 regression: successful analysis must retain the document that
+    // authenticated history download reads.
+    expect(fs.existsSync(persistedResumePath)).toBe(true);
   });
 
   // ── TEST 2: NLP Failure Reaches Persisted Failed State on Retry Exhaustion ─

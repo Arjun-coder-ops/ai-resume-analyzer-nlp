@@ -3,8 +3,10 @@
 const express = require('express');
 const router = express.Router();
 const { body } = require('express-validator');
-const { register, login, getMe } = require('../controllers/authController');
+const { register, login, getMe, logout } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
+const { requireCsrf } = require('../middleware/csrfMiddleware');
+const { loginLimiter, registrationLimiter } = require('../middleware/rateLimitMiddleware');
 
 // Validation rules
 const registerValidation = [
@@ -19,8 +21,9 @@ const loginValidation = [
 ];
 
 // Routes
-router.post('/register', registerValidation, register);
-router.post('/login',    loginValidation,    login);
+router.post('/register', registrationLimiter, registerValidation, register);
+router.post('/login',    loginLimiter, loginValidation, login);
 router.get('/me',        protect,            getMe);
+router.post('/logout',   protect, requireCsrf, logout);
 
 module.exports = router;

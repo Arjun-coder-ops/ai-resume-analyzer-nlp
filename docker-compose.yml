@@ -1,0 +1,88 @@
+services:
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  nlp:
+    build: ./nlp-service
+    environment:
+      PORT: 5001
+      FLASK_ENV: development
+      INTERNAL_NLP_TOKEN: local-development-internal-token-change-before-deploy
+      REQUIRE_INTERNAL_AUTH: "true"
+      NLP_LOAD_EMBEDDINGS: "false"
+    ports:
+      - "5001:5001"
+
+  api:
+    build: ./backend
+    environment:
+      PORT: 5000
+      NODE_ENV: development
+      APP_URL: http://localhost:5000
+      CLIENT_URL: http://localhost:5173
+      MONGO_URI: mongodb://mongo:27017/resumeiq_dev
+      REDIS_URL: redis://redis:6379
+      NLP_SERVICE_URL: http://nlp:5001
+      JWT_SECRET: local-development-jwt-secret-change-before-deploy
+      INTERNAL_NLP_TOKEN: local-development-internal-token-change-before-deploy
+      QUOTA_TIME_ZONE: UTC
+      RUN_ANALYSIS_WORKER: "false"
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "5000:5000"
+    volumes:
+      # API uploads are consumed asynchronously by the separate worker.
+      - uploads_data:/app/uploads
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nlp:
+        condition: service_started
+
+  worker:
+    build: ./backend
+    command: npm run worker
+    environment:
+      NODE_ENV: production
+      MONGO_URI: mongodb://mongo:27017/resumeiq_dev
+      REDIS_URL: redis://redis:6379
+      NLP_SERVICE_URL: http://nlp:5001
+      INTERNAL_NLP_TOKEN: local-development-internal-token-change-before-deploy
+      QUOTA_TIME_ZONE: UTC
+      RUN_ANALYSIS_WORKER: "true"
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      # Keep the queue worker on the same private development document store.
+      - uploads_data:/app/uploads
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nlp:
+        condition: service_started
+
+volumes:
+  mongo_data:
+  uploads_data:

@@ -234,23 +234,32 @@ class TestScoringReliability(unittest.TestCase):
         finally:
             app.embedding_model = original_model
 
-        # Subcase F2: cos_sim returns NaN or Inf
-        with patch("app.util.cos_sim", return_value=MagicMock(item=lambda: float("nan"))):
-            total_score, breakdown, _ = compute_industry_ats_score(
-                resume_data, jd_text, ["Python"], [], text
-            )
-            self.assertFalse(math.isnan(breakdown["experience_alignment"]["score"]))
-            self.assertGreaterEqual(breakdown["experience_alignment"]["score"], 0)
-            self.assertLessEqual(breakdown["experience_alignment"]["score"], 25)
+        # Subcases F2/F3 exercise the semantic path explicitly.  The service
+        # deliberately omits the sentence-transformers utility module when
+        # NLP_LOAD_EMBEDDINGS=false, so provide both dependencies as mocks.
+        original_model = app.embedding_model
+        try:
+            app.embedding_model = MagicMock()
+            with patch.object(app, "util", create=True) as mock_util:
+                # Subcase F2: cos_sim returns NaN or Inf
+                mock_util.cos_sim.return_value = MagicMock(item=lambda: float("nan"))
+                total_score, breakdown, _ = compute_industry_ats_score(
+                    resume_data, jd_text, ["Python"], [], text
+                )
+                self.assertFalse(math.isnan(breakdown["experience_alignment"]["score"]))
+                self.assertGreaterEqual(breakdown["experience_alignment"]["score"], 0)
+                self.assertLessEqual(breakdown["experience_alignment"]["score"], 25)
 
-        # Subcase F3: cos_sim raises an unexpected exception
-        with patch("app.util.cos_sim", side_effect=RuntimeError("GPU OOM / tensor error")):
-            total_score, breakdown, _ = compute_industry_ats_score(
-                resume_data, jd_text, ["Python"], [], text
-            )
-            self.assertIsInstance(breakdown["experience_alignment"]["score"], int)
-            self.assertGreaterEqual(breakdown["experience_alignment"]["score"], 0)
-            self.assertLessEqual(breakdown["experience_alignment"]["score"], 25)
+                # Subcase F3: cos_sim raises an unexpected exception
+                mock_util.cos_sim.side_effect = RuntimeError("GPU OOM / tensor error")
+                total_score, breakdown, _ = compute_industry_ats_score(
+                    resume_data, jd_text, ["Python"], [], text
+                )
+                self.assertIsInstance(breakdown["experience_alignment"]["score"], int)
+                self.assertGreaterEqual(breakdown["experience_alignment"]["score"], 0)
+                self.assertLessEqual(breakdown["experience_alignment"]["score"], 25)
+        finally:
+            app.embedding_model = original_model
 
     # ── Case G: Missing or malformed pillar values ──────────────────────
     def test_case_g_missing_or_malformed_pillar_values(self):
@@ -463,6 +472,22 @@ class TestScoringReliability(unittest.TestCase):
             self.assertIsInstance(resume_data, dict)
             self.assertIn("skills", resume_data)
             self.assertIn("experience", resume_data)
+
+    def test_fallback_gap_analysis_ignores_generic_job_description_words(self):
+        with patch("app.call_llm", side_effect=RuntimeError("provider unavailable")):
+            gap_data = get_suggestions_and_missing(
+                resume_text="Backend engineer with Python, Docker, and AWS experience.",
+                jd_text=(
+                    "Work with a collaborative team. Candidates must communicate clearly and have 3 years "
+                    "of experience building Python services with Docker, AWS, and Kubernetes."
+                ),
+                resume_skills=["Python", "Docker", "AWS"],
+            )
+
+        self.assertEqual(gap_data["matched_skills"], ["AWS", "Python", "Docker"])
+        self.assertEqual(gap_data["missing_skills"], ["Kubernetes"])
+        self.assertNotIn("work", [skill.lower() for skill in gap_data["missing_skills"]])
+        self.assertNotIn("years", [skill.lower() for skill in gap_data["missing_skills"]])
 
     # ── Job Description Validation Test (Requirement 2) ────────────────
     def test_short_or_empty_job_description_validation(self):

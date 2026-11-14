@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const FormData = require('form-data');
 const Analysis = require('../models/Analysis');
 const UserDailyQuota = require('../models/UserDailyQuota');
+const { documentStorage } = require('../services/documentStorage');
 
 // Controlled settings
 const QUEUE_CONCURRENCY = parseInt(process.env.QUEUE_CONCURRENCY || '1', 10);
@@ -37,7 +38,36 @@ const parseRetryAfter = (headerValue) => {
  * @param {string} filePath
  */
 const safeUnlink = (filePath) => {
-  if (filePath && fs.existsSync(filePath)) {
+  if (!filePath) return;
+
+  // Legacy payloads carry an absolute temporary path. Always clean that exact
+  // local file first; a same-named persisted key must not mask its cleanup.
+  if (path.isAbsolute(filePath)) {
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (err) {
+        if (err && err.code !== 'ENOENT') {
+          console.error('[Queue Worker] File cleanup error (ignored):', err.message);
+        }
+      }
+    }
+    return;
+  }
+
+  // Queue payloads now carry an opaque key. The legacy path fallback keeps
+  // in-flight jobs and older test payloads compatible during migration.
+  const key = path.basename(filePath);
+  try {
+    if (documentStorage.has(key)) {
+      documentStorage.remove(key);
+      return;
+    }
+  } catch (storageError) {
+    console.error('[Queue Worker] Document storage cleanup error (ignored):', storageError.message);
+  }
+
+  if (fs.existsSync(filePath)) {
     try {
       fs.unlinkSync(filePath);
     } catch (err) {
@@ -53,7 +83,9 @@ const safeUnlink = (filePath) => {
  * and directly updates the database with comprehensive failure and retry safety.
  */
 const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIES) => {
-  const { analysisId, resumePath, resumeOriginalName, jobDescription, webhookUrl } = jobData;
+  const { analysisId, resumePath, resumeKey, resumeOriginalName, jobDescription, webhookUrl } = jobData;
+  const documentKey = resumeKey || path.basename(resumePath || '');
+  const cleanupReference = resumeKey ? documentKey : resumePath;
   console.log(`[Queue Worker] Processing analysis job ${analysisId} (attempt ${attempt}/${maxAttempts})`);
 
   let analysis = await Analysis.findById(analysisId);
@@ -66,7 +98,6 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
   // 1. Safeguard: Never reprocess or overwrite an already completed analysis
   if (analysis.status === 'completed') {
     console.log(`[Queue Worker] Analysis ${analysisId} is already completed. Skipping reprocessing.`);
-    safeUnlink(resumePath);
     return { success: true, alreadyCompleted: true };
   }
 
@@ -79,13 +110,17 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
 
   if (analysis.status === 'failed' && !isTimeoutFailure) {
     console.log(`[Queue Worker] Analysis ${analysisId} is already marked as failed. Skipping reprocessing.`);
-    safeUnlink(resumePath);
+    safeUnlink(cleanupReference);
     return { success: false, alreadyFailed: true };
   }
 
-  // 3. Safeguard: Verify resume document exists on disk
-  if (!resumePath || !fs.existsSync(resumePath)) {
-    const err = new Error(`Resume file not found at ${resumePath}`);
+  // 3. Safeguard: Resolve the document through the storage boundary. A
+  // provider adapter can later replace local disk without changing queue job
+  // semantics; old jobs with `resumePath` keep working through the fallback.
+  const hasStoredDocument = documentKey && await documentStorage.has(documentKey);
+  const hasLegacyPath = resumePath && fs.existsSync(resumePath);
+  if (!hasStoredDocument && !hasLegacyPath) {
+    const err = new Error(`Resume document not found for key ${documentKey || '<missing>'}`);
     err.isTerminal = true;
     const failDoc = await Analysis.findOneAndUpdate(
       { _id: analysisId, status: { $in: ['processing', 'queued', 'pending'] } },
@@ -131,7 +166,7 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
 
   if (!claimResult) {
     console.log(`[Queue Worker] Analysis ${analysisId} is already terminal or claimed. Skipping processing.`);
-    safeUnlink(resumePath);
+    safeUnlink(cleanupReference);
     return { success: false, alreadyTerminal: true };
   }
 
@@ -156,7 +191,10 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
 
   try {
     const formData = new FormData();
-    formData.append('resume', fs.createReadStream(resumePath), {
+    const resumeStream = hasStoredDocument
+      ? await documentStorage.createReadStream(documentKey)
+      : fs.createReadStream(resumePath);
+    formData.append('resume', resumeStream, {
       filename: resumeOriginalName,
       contentType: 'application/pdf',
     });
@@ -227,7 +265,6 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
         const current = await Analysis.findById(analysisId);
         if (current?.status === 'completed') {
           console.log(`[Queue Worker] Analysis ${analysisId} was already completed concurrently.`);
-          safeUnlink(resumePath);
           return { success: true, alreadyCompleted: true };
         }
         if (current?.attemptToken && current.attemptToken !== attemptToken) {
@@ -237,15 +274,16 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
         }
         if (current?.status === 'failed') {
           console.warn(`[Queue Worker] Analysis ${analysisId} was already marked failed concurrently. Discarding completion.`);
-          safeUnlink(resumePath);
+          safeUnlink(cleanupReference);
           return { success: false, alreadyFailed: true };
         }
       }
 
       console.log(`[Queue Worker] Job ${analysisId} completed successfully`);
 
-      // Clean up temporary resume file on successful persistence
-      safeUnlink(resumePath);
+      // The uploaded resume is the persistent document referenced by Analysis.
+      // It must remain available to the authenticated history download route until
+      // the owner deletes the analysis or a retention job removes it.
 
       return { success: true };
     } else {
@@ -297,7 +335,7 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
         );
 
         if (failUpdated) {
-          safeUnlink(resumePath);
+          safeUnlink(cleanupReference);
           if (failUpdated.user) {
             await UserDailyQuota.refundFailedAnalysisQuota(failUpdated.user, failUpdated._id, failUpdated.createdAt);
           }
@@ -309,7 +347,7 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
       }
 
       // Clean up temporary file only after terminal failure
-      safeUnlink(resumePath);
+      safeUnlink(cleanupReference);
 
       if (isNonRetryableClientError) {
         error.isTerminal = true;
@@ -342,6 +380,11 @@ let redisConnection = null;
 // Only instantiate BullMQ when not in test environment and REDIS_URL is configured
 const hasRedis = Boolean(process.env.REDIS_URL && process.env.REDIS_URL.trim());
 const isTest = process.env.NODE_ENV === 'test';
+const isProduction = process.env.NODE_ENV === 'production';
+const shouldRunWorker = process.env.RUN_ANALYSIS_WORKER === undefined
+  ? !isProduction
+  : process.env.RUN_ANALYSIS_WORKER === 'true';
+let queueInitializationError = null;
 
 if (!isTest && hasRedis) {
   try {
@@ -358,48 +401,53 @@ if (!isTest && hasRedis) {
 
     analyzeQueue = new Queue('analyzeResume', { connection });
 
-    worker = new Worker(
-      'analyzeResume',
-      async (job) => {
-        const currentAttempt = (job.attemptsMade || 0) + 1;
-        const totalAttempts = job.opts?.attempts || MAX_RETRIES;
-        return await processAnalysisJob(job.data, currentAttempt, totalAttempts);
-      },
-      {
-        connection,
-        concurrency: QUEUE_CONCURRENCY,
-      }
-    );
-
-    worker.on('failed', async (job, err) => {
-      console.error(`[BullMQ Worker] Job ${job?.id} failed:`, err.message);
-      const attemptsMade = (job?.attemptsMade || 0);
-      const maxAttempts = job?.opts?.attempts || MAX_RETRIES;
-
-      if (attemptsMade >= maxAttempts || err.isTerminal || err.name === 'UnrecoverableError') {
-        try {
-          // Atomic update: only mark failed if still non-terminal, never overwrite completed
-          await Analysis.findOneAndUpdate(
-            { _id: job.data?.analysisId, status: { $in: ['processing', 'queued', 'pending'] } },
-            {
-              $set: {
-                status: 'failed',
-                errorMessage: err.message || 'AI processing failed after retrying.',
-              },
-            }
-          );
-        } catch (dbErr) {
-          console.error('[BullMQ Worker] Failed to update terminal failure in DB:', dbErr.message);
+    if (shouldRunWorker) {
+      worker = new Worker(
+        'analyzeResume',
+        async (job) => {
+          const currentAttempt = (job.attemptsMade || 0) + 1;
+          const totalAttempts = job.opts?.attempts || MAX_RETRIES;
+          return await processAnalysisJob(job.data, currentAttempt, totalAttempts);
+        },
+        {
+          connection,
+          concurrency: QUEUE_CONCURRENCY,
         }
+      );
 
-        // Clean up file if still present
-        safeUnlink(job.data?.resumePath);
-      }
-    });
+      worker.on('failed', async (job, err) => {
+        console.error(`[BullMQ Worker] Job ${job?.id} failed:`, err.message);
+        const attemptsMade = (job?.attemptsMade || 0);
+        const maxAttempts = job?.opts?.attempts || MAX_RETRIES;
 
-    console.log('✅ BullMQ Redis queue worker initialized');
+        if (attemptsMade >= maxAttempts || err.isTerminal || err.name === 'UnrecoverableError') {
+          try {
+            // Atomic update: only mark failed if still non-terminal, never overwrite completed
+            await Analysis.findOneAndUpdate(
+              { _id: job.data?.analysisId, status: { $in: ['processing', 'queued', 'pending'] } },
+              {
+                $set: {
+                  status: 'failed',
+                  errorMessage: err.message || 'AI processing failed after retrying.',
+                },
+              }
+            );
+          } catch (dbErr) {
+            console.error('[BullMQ Worker] Failed to update terminal failure in DB:', dbErr.message);
+          }
+
+          // Terminally failed documents are removed; completed ones are retained.
+          safeUnlink(job.data?.resumePath);
+        }
+      });
+
+      console.log('✅ BullMQ Redis queue worker initialized');
+    } else {
+      console.log('✅ BullMQ Redis queue client initialized (worker disabled in API process)');
+    }
   } catch (e) {
-    console.warn('⚠️ BullMQ initialization failed, falling back to in-memory async processing:', e.message);
+    queueInitializationError = e;
+    console.error('❌ BullMQ initialization failed:', e.message);
     analyzeQueue = null;
     worker = null;
   }
@@ -477,8 +525,17 @@ const enqueueAnalysis = async (jobData) => {
         jobId: jobData.analysisId,
       });
     } catch (err) {
-      console.warn('⚠️ Redis enqueue failed, using in-memory async fallback:', err.message);
+      if (isProduction) {
+        throw new Error(`Durable analysis queue is unavailable: ${err.message}`);
+      }
+      console.warn('⚠️ Redis enqueue failed, using development in-memory fallback:', err.message);
     }
+  }
+
+  if (isProduction) {
+    throw new Error(
+      `Durable analysis queue is required in production.${queueInitializationError ? ` ${queueInitializationError.message}` : ''}`
+    );
   }
 
   // Enqueue in memory queue runner with analysisId deduplication against both waiting and active jobs
@@ -493,6 +550,22 @@ const enqueueAnalysis = async (jobData) => {
   }
 
   return { id: jobData.analysisId };
+};
+
+/**
+ * Production readiness guard. Local development and unit tests may use the
+ * explicit in-memory adapter, but production must not accept work without Redis.
+ */
+const ensureQueueReady = async () => {
+  if (isProduction && !analyzeQueue) {
+    throw new Error(
+      `Redis/BullMQ is required in production.${queueInitializationError ? ` ${queueInitializationError.message}` : ''}`
+    );
+  }
+
+  if (isProduction) {
+    await analyzeQueue.waitUntilReady();
+  }
 };
 
 /**
@@ -680,4 +753,5 @@ module.exports = {
   parseRetryAfter,
   safeUnlink,
   setQueueInstancesForTesting,
+  ensureQueueReady,
 };

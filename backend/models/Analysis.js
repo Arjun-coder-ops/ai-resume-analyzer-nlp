@@ -177,6 +177,18 @@ const isCorrectUniquePartialIndex = (idx) => {
  * 6. Explicitly verifies index constraint exists and surfaces unexpected errors to halt unsafe startup.
  */
 const syncAnalysisIndexes = async () => {
+  // A new MongoDB database has no collections yet. `collection.indexes()`
+  // throws NamespaceNotFound in that state, so create the collection first
+  // while treating a concurrent creator as the expected startup race.
+  try {
+    await Analysis.createCollection();
+  } catch (createCollectionErr) {
+    const alreadyExists = createCollectionErr.code === 48 || createCollectionErr.codeName === 'NamespaceExists';
+    if (!alreadyExists) {
+      throw createCollectionErr;
+    }
+  }
+
   const indexes = await Analysis.collection.indexes();
 
   // 1. Check if the target unique partial compound index already exists with correct specification

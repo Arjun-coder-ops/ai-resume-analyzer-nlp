@@ -3,12 +3,12 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { documentStorage } = require('../services/documentStorage');
 
-// Ensure uploads directory exists
-const uploadDir = process.env.UPLOAD_DIR || './uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// The storage adapter owns the trusted local root. Multer only receives that
+// resolved directory; controllers persist the resulting opaque filename.
+documentStorage.ensureReady();
+const uploadDir = documentStorage.stagingDir;
 
 // ── Storage: save to disk with unique filename ──────────────
 const storage = multer.diskStorage({
@@ -24,11 +24,33 @@ const storage = multer.diskStorage({
 
 // ── File filter: only allow PDFs ────────────────────────────
 const fileFilter = (req, file, cb) => {
-  if (file.mimetype === 'application/pdf') {
+  const isPdfName = path.extname(file.originalname || '').toLowerCase() === '.pdf';
+  if (file.mimetype === 'application/pdf' && isPdfName) {
     cb(null, true);
   } else {
     cb(new Error('Only PDF files are allowed'), false);
   }
+};
+
+const validatePdfSignature = (req, res, next) => {
+  if (!req.file) return next();
+
+  try {
+    const descriptor = fs.openSync(req.file.path, 'r');
+    const header = Buffer.alloc(5);
+    const bytesRead = fs.readSync(descriptor, header, 0, header.length, 0);
+    fs.closeSync(descriptor);
+
+    if (bytesRead !== 5 || header.toString('ascii') !== '%PDF-') {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ success: false, message: 'The uploaded file is not a valid PDF document.' });
+    }
+  } catch (error) {
+    try { fs.unlinkSync(req.file.path); } catch (cleanupError) { /* no-op */ }
+    return res.status(400).json({ success: false, message: 'The uploaded file could not be validated.' });
+  }
+
+  return next();
 };
 
 // ── Multer instance ─────────────────────────────────────────
@@ -37,7 +59,8 @@ const upload = multer({
   fileFilter,
   limits: {
     fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024, // 10 MB default
+    files: 1,
   },
 });
 
-module.exports = upload;
+module.exports = { upload, validatePdfSignature };

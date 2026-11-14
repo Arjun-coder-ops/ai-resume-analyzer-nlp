@@ -329,6 +329,26 @@ describe('API State Consistency & Security Ownership Tests', () => {
     expect(res.body.toString('utf8')).toBe(testContent);
   });
 
+  test('10a. Deleting an owned analysis removes its retained private resume document', async () => {
+    const filename = `delete_owned_${Date.now()}.pdf`;
+    const filePath = createUploadTestFile(filename, '%PDF-1.4 retained document');
+    const analysis = await Analysis.create({
+      user: userA._id,
+      resumeFilename: filename,
+      resumeOriginalName: 'DeleteMe.pdf',
+      jobTitle: 'TestConsistency - Delete Retained Resume',
+      jobDescription: 'Job description text with sufficient length for test consistency.',
+      status: 'completed',
+    });
+
+    const res = await request(app)
+      .delete(`/api/history/${analysis._id}`)
+      .set('Authorization', `Bearer ${tokenA}`);
+
+    expect(res.statusCode).toBe(200);
+    expect(fs.existsSync(filePath)).toBe(false);
+  });
+
   // ── TEST 11: Missing/Cleaned-Up Resume File Returns Clean 404 ─────────────
   test('11. Resume download returns 404 when resume file has been unlinked/cleaned up from disk', async () => {
     const missingFilename = `cleaned_up_file_${Date.now()}.pdf`;
