@@ -44,7 +44,7 @@ Replace Compose-local upload sharing with an object-storage abstraction, retain 
 
 ## M2 working checkpoint (2026-11-14)
 
-- M2 is **complete pending the verified commit and push**. The public landing page, authenticated shell, split-screen authentication, results/history interfaces, and future-module previews are included in the staged M2 set.
+- M2 is **complete and pushed** as `615f4657bd4b11222b837b0c7cbb4eba494feeb0`. The public landing page, authenticated shell, split-screen authentication, results/history interfaces, and future-module previews are included in that M2 checkpoint.
 - This session added the results presentation refinements, accessible workspace tabs and score progress bars, a real authenticated private-PDF download action in history, explicit deletion feedback, and protected preview routes for future modules. Preview routes state clearly that no unavailable service is operating.
 - `npm run build` in `frontend/` passed after these changes (Vite, 1,587 modules); frontend and backend production audits both reported zero vulnerabilities.
 - Recovery evidence: Docker Desktop had not been running. It was started normally, without a Compose teardown or volume reset. Elevated host access then showed healthy MongoDB/Redis and running API, worker, NLP services; the full backend suite passed **84/84**, NLP passed **47/47**, and `node test_production.js` passed the real API/worker journey.

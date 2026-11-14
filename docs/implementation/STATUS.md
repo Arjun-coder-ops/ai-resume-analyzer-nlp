@@ -3,7 +3,7 @@
 ## Current position
 
 - **Active branch:** `feat/resumeiq-saas-transformation`
-- **Milestone:** 2 — COMPLETE pending verified commit/push. Milestone 3 — Master Career Profile is next.
+- **Milestone:** 2 — COMPLETE and pushed as `615f465`. Milestone 3 — Master Career Profile is next.
 - **Baseline revision:** `5fba7d6`
 - **Verification environment:** isolated Docker Compose project `resumeiq-m0-20261114`, using MongoDB 7, Redis 7, Node.js services, and the supplied Python 3.11/PyMuPDF image.
 - **Working-tree safety:** pre-existing tracked and untracked work remains intentionally unstaged. Milestone files must be staged by relevant hunk/file only.
