@@ -4,41 +4,61 @@ import threading
 import json
 import time
 import math
+import hmac
 import fitz  # PyMuPDF
 import requests
 from flask import Flask, request, jsonify
-from flask_cors import CORS
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+
+# The NLP service is internal-only. Browser CORS is neither needed nor enabled
+# unless a development operator explicitly opts in.
+if os.environ.get("NLP_ALLOW_CORS", "").lower() in {"1", "true", "yes"}:
+    from flask_cors import CORS
+    CORS(app)
 
 # ── Config & Models ─────────────────────────────────────────
 MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10 MB
 app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", "20"))
+MAX_EXTRACTED_TEXT_CHARACTERS = int(os.environ.get("MAX_EXTRACTED_TEXT_CHARACTERS", "200000"))
+
+
+class RequestValidationError(ValueError):
+    """A request is syntactically valid but cannot be processed."""
+
+
+class ResumeValidationError(RequestValidationError):
+    """A user-provided resume could not be processed safely."""
 
 # Sentence Transformer setup
 embedding_model = None
-print("[NLP] Initializing sentence-transformers model...")
-try:
-    from sentence_transformers import SentenceTransformer, util
-    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-    print("[SUCCESS] Model loaded: all-MiniLM-L6-v2")
-except Exception as e:
-    print(f"[WARN] sentence-transformers model not loaded ({e}). Using lexical fallback scoring.")
+if os.environ.get("NLP_LOAD_EMBEDDINGS", "true").strip().lower() in {"1", "true", "yes", "on"}:
+    print("[NLP] Initializing sentence-transformers model...")
+    try:
+        from sentence_transformers import SentenceTransformer, util
+        embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        print("[SUCCESS] Model loaded: all-MiniLM-L6-v2")
+    except Exception as e:
+        print(f"[WARN] sentence-transformers model not loaded ({e}). Using lexical fallback scoring.")
+else:
+    print("[NLP] Embedding model disabled by NLP_LOAD_EMBEDDINGS; using lexical fallback scoring.")
 
 # Configure Groq API (High-speed Llama-3.3-70B with 14,400 daily requests)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 
 # Configure Gemini API
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+gemini_client = None
 if API_KEY and API_KEY != "YOUR_GEMINI_API_KEY_HERE":
-    import google.generativeai as genai
-    genai.configure(api_key=API_KEY)
-else:
-    genai = None
+    try:
+        from google import genai
+        gemini_client = genai.Client(api_key=API_KEY)
+    except ImportError as error:
+        print(f"[WARN] Google GenAI SDK is unavailable ({error}). Gemini fallback disabled.")
 
 # Global rate-limit cooldown tracker
 _gemini_cooldown_until = 0.0
@@ -46,8 +66,13 @@ _gemini_cooldown_until = 0.0
 # Per-model cooldown dictionary to avoid re-querying models that are currently quota-exhausted
 _model_cooldowns = {}
 
-# Model fallback chain: gemini-2.5-flash is PRIMARY (#1). Fallbacks are ONLY used when 2.5 limits are reached.
-LLM_MODELS = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.5-flash']
+# Provider model selection is deployment configuration. Gemini 2.5 Flash is a
+# documented stable default; operators can supply a comma-separated fallback list.
+LLM_MODELS = [
+    model.strip()
+    for model in os.environ.get("GEMINI_MODELS", "gemini-2.5-flash").split(",")
+    if model.strip()
+]
 
 
 def is_rate_limit_error(e: Exception) -> bool:
@@ -56,13 +81,17 @@ def is_rate_limit_error(e: Exception) -> bool:
     return "429" in err_str or "quota" in err_str or "resourceexhausted" in err_str or "rate limit" in err_str
 
 
-GROQ_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b']
+GROQ_MODELS = [
+    model.strip()
+    for model in os.environ.get("GROQ_MODELS", "").split(",")
+    if model.strip()
+]
 
 
 def call_groq(prompt: str) -> str:
     """Execute inference via Groq LPU using high-performance open models (14,400 requests/day free tier)."""
-    if not GROQ_API_KEY:
-        raise ValueError("GROQ_API_KEY is not configured.")
+    if not GROQ_API_KEY or not GROQ_MODELS:
+        raise ValueError("Groq requires GROQ_API_KEY and at least one GROQ_MODELS entry.")
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -110,7 +139,7 @@ def call_llm(prompt: str) -> str:
     global _gemini_cooldown_until
 
     # ── 1. Groq Cloud Engine (Primary when configured) ─────────────────
-    if GROQ_API_KEY:
+    if GROQ_API_KEY and GROQ_MODELS:
         try:
             print("[LLM] Executing analysis with Groq (Llama-3.3-70b-versatile)...")
             res = call_groq(prompt)
@@ -120,7 +149,7 @@ def call_llm(prompt: str) -> str:
             print(f"[WARN] Groq request failed: {e}. Falling back to Gemini/Local...")
 
     # ── 2. Google Gemini Fallback ─────────────────────────────────────
-    if API_KEY and API_KEY != "YOUR_GEMINI_API_KEY_HERE" and genai is not None:
+    if API_KEY and API_KEY != "YOUR_GEMINI_API_KEY_HERE" and gemini_client is not None:
         now = time.time()
         if now < _gemini_cooldown_until:
             remaining = int(_gemini_cooldown_until - now)
@@ -134,8 +163,10 @@ def call_llm(prompt: str) -> str:
                 continue
 
             try:
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(prompt)
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                )
                 if response and response.text:
                     return response.text
             except Exception as e:
@@ -177,18 +208,37 @@ def clean_and_parse_json(raw_text: str) -> dict:
 
 
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
-    """Extract full text from PDF with reading-order sorting and block fallback."""
+    """Extract bounded PDF text with reading-order sorting and block fallback."""
+    if not pdf_bytes or not pdf_bytes.startswith(b"%PDF-"):
+        raise ResumeValidationError("The uploaded document is not a valid PDF.")
+    if len(pdf_bytes) > MAX_CONTENT_LENGTH:
+        raise ResumeValidationError("The uploaded PDF exceeds the maximum allowed size.")
+
     full_text = ""
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-        for page in doc:
-            page_text = page.get_text("text", sort=True)
-            if not page_text or not page_text.strip():
-                # Block fallback for multi-column / complex layouts
-                blocks = page.get_text("blocks")
-                page_text = "\n".join(
-                    [b[4] for b in blocks if isinstance(b, (list, tuple)) and len(b) > 4 and isinstance(b[4], str)]
-                )
-            full_text += page_text + "\n"
+    try:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            if doc.needs_pass:
+                raise ResumeValidationError("Password-protected PDFs are not supported.")
+            if doc.page_count < 1:
+                raise ResumeValidationError("The uploaded PDF has no pages.")
+            if doc.page_count > MAX_PDF_PAGES:
+                raise ResumeValidationError(f"The uploaded PDF exceeds the {MAX_PDF_PAGES}-page limit.")
+
+            for page in doc:
+                page_text = page.get_text("text", sort=True)
+                if not page_text or not page_text.strip():
+                    # Block fallback for multi-column / complex layouts
+                    blocks = page.get_text("blocks")
+                    page_text = "\n".join(
+                        [b[4] for b in blocks if isinstance(b, (list, tuple)) and len(b) > 4 and isinstance(b[4], str)]
+                    )
+                if len(full_text) + len(page_text) > MAX_EXTRACTED_TEXT_CHARACTERS:
+                    raise ResumeValidationError("The uploaded PDF contains too much extractable text.")
+                full_text += page_text + "\n"
+    except ResumeValidationError:
+        raise
+    except Exception as error:
+        raise ResumeValidationError("The uploaded PDF could not be read.") from error
 
     # Clean redundant empty lines
     cleaned = re.sub(r'\n{3,}', '\n\n', full_text).strip()
@@ -202,7 +252,12 @@ def fallback_extract_resume_data(text: str) -> dict:
     """
     Robust local regex-based parser that guarantees NO section is skipped
     if the LLM service is temporarily offline or rate-limited.
+    Supports line-based headers, markdown headers, inline section delimiters,
+    and semantic anchor fallbacks without cross-contaminating sections.
     """
+    if not text or not isinstance(text, str):
+        text = ""
+
     lines = [line.strip() for line in text.split('\n') if line.strip()]
 
     # 1. Contact / Candidate Info
@@ -215,6 +270,10 @@ def fallback_extract_resume_data(text: str) -> dict:
     # Filter out common false names
     if any(k in name.lower() for k in ["resume", "curriculum", "cv", "page", "email"]):
         name = lines[1] if len(lines) > 1 else "Candidate"
+    # Remove email/phone if joined on first line
+    name = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '', name).strip(' -|,')
+    if not name:
+        name = "Candidate"
 
     candidate_info = {
         "name": name,
@@ -226,7 +285,7 @@ def fallback_extract_resume_data(text: str) -> dict:
         "portfolio": ""
     }
 
-    # 2. Section segmentation by regex headers
+    # 2. Section segmentation patterns
     section_patterns = {
         "summary": r'(?:professional\s+summary|summary|profile|about\s+me|objective)',
         "experience": r'(?:work\s+experience|professional\s+experience|experience|employment\s+history|work\s+history)',
@@ -238,16 +297,33 @@ def fallback_extract_resume_data(text: str) -> dict:
         "achievements": r'(?:awards|honors|achievements|recognitions)'
     }
 
-    # Identify section indices
-    sections = {}
-    current_section = "intro"
     section_content = {k: [] for k in section_patterns.keys()}
     section_content["intro"] = []
+    current_section = "intro"
 
+    # Normalize text with inline section headers if lines are few but contain section keywords
+    processed_lines = []
+    pattern_combined = r'\b(WORK\s+EXPERIENCE|PROFESSIONAL\s+EXPERIENCE|EXPERIENCE|EMPLOYMENT\s+HISTORY|EDUCATION|ACADEMIC\s+BACKGROUND|TECHNICAL\s+SKILLS|SKILLS|PROJECTS|CERTIFICATIONS|LICENSES)\b[:\s-]*'
     for line in lines:
+        tokens = re.split(pattern_combined, line, flags=re.IGNORECASE)
+        if len(tokens) > 2:
+            if tokens[0].strip():
+                processed_lines.append(tokens[0].strip())
+            i = 1
+            while i < len(tokens):
+                header = tokens[i].strip()
+                content = tokens[i+1].strip() if i+1 < len(tokens) else ""
+                processed_lines.append(header)
+                if content:
+                    processed_lines.append(content)
+                i += 2
+        else:
+            processed_lines.append(line)
+
+    for line in processed_lines:
         matched_sec = None
         for sec_name, pattern in section_patterns.items():
-            if re.match(r'^(?:' + pattern + r')[:\s]*$', line, re.IGNORECASE):
+            if re.match(r'^(?:[#*_\-–\s]*)\b(?:' + pattern + r')\b[:\s\-–|]*$', line, re.IGNORECASE):
                 matched_sec = sec_name
                 break
         if matched_sec:
@@ -268,8 +344,11 @@ def fallback_extract_resume_data(text: str) -> dict:
             if p_clean and len(p_clean) < 40 and not p_clean.endswith(':'):
                 skills_list.append(p_clean)
     if not skills_list:
-        common_tech = ["Python", "JavaScript", "TypeScript", "React", "Node.js", "Java", "C++", "C#", "SQL",
-                       "MongoDB", "PostgreSQL", "AWS", "Azure", "Docker", "Kubernetes", "Git", "HTML", "CSS", "REST API"]
+        common_tech = [
+            "Python", "JavaScript", "TypeScript", "React", "Node.js", "Java", "C++", "C#", "SQL",
+            "MongoDB", "PostgreSQL", "AWS", "Azure", "Docker", "Kubernetes", "Git", "HTML", "CSS", "REST API",
+            "FastAPI", "Redis", "Kafka", "GraphQL", "Terraform", "CI/CD", "Microservices"
+        ]
         for tech in common_tech:
             if re.search(r'\b' + re.escape(tech) + r'\b', text, re.IGNORECASE):
                 skills_list.append(tech)
@@ -280,15 +359,39 @@ def fallback_extract_resume_data(text: str) -> dict:
     if exp_lines:
         current_exp = {"role": exp_lines[0], "company": "", "duration": "", "details": []}
         for el in exp_lines[1:]:
-            if el.startswith(('•', '-', '*', '–')):
+            is_new_role = bool(
+                re.search(r'\b(?:19|20)\d{2}\s*(?:-|–|to)\s*(?:(?:19|20)\d{2}|present|current)\b', el, re.I) and
+                any(title_w in el.lower() for title_w in [
+                    'engineer', 'developer', 'nurse', 'technician', 'electrician', 'manager',
+                    'coordinator', 'specialist', 'analyst', 'clerk', 'cook', 'chef', 'intern',
+                    'assistant', 'lead', 'architect', 'programmer'
+                ])
+            )
+            if is_new_role and current_exp["details"]:
+                experience.append(current_exp)
+                current_exp = {"role": el, "company": "", "duration": "", "details": []}
+            elif el.startswith(('•', '-', '*', '–')):
                 current_exp["details"].append(el.lstrip('•-*– ').strip())
-            elif not current_exp["company"]:
+            elif not current_exp["company"] and not re.search(r'\b(?:19|20)\d{2}\b', el):
                 current_exp["company"] = el
             elif not current_exp["duration"] and any(yr in el for yr in ['20', '19', 'Present', 'current']):
                 current_exp["duration"] = el
             else:
                 current_exp["details"].append(el)
         experience.append(current_exp)
+    else:
+        # Fallback experience scan for unsectioned or inline resume text:
+        role_pattern = r'\b(Senior\s+[A-Za-z]+|Software\s+Engineer|Backend\s+Engineer|Developer|Patient\s+Care\s+Technician|Journeyman\s+Electrician|Electrician\s+Helper|Office\s+Clerk|Chef|Nurse|Manager|Coordinator|Analyst)\b'
+        for line in lines:
+            r_match = re.search(role_pattern, line, re.IGNORECASE)
+            if r_match:
+                dur_match = re.search(r'\b(?:19|20)\d{2}\s*(?:-|–|to)\s*(?:(?:19|20)\d{2}|present|current)\b', line, re.I)
+                experience.append({
+                    "role": r_match.group(0),
+                    "company": "",
+                    "duration": dur_match.group(0) if dur_match else "",
+                    "details": [line]
+                })
 
     # Extract Education entries
     edu_lines = section_content.get("education", [])
@@ -301,6 +404,20 @@ def fallback_extract_resume_data(text: str) -> dict:
             "gpa": "",
             "details": " ".join(edu_lines[3:]) if len(edu_lines) > 3 else ""
         })
+    else:
+        # Fallback education scan for unsectioned resume text
+        deg_pattern = r'\b(?:Bachelor|Master|Doctor|Ph\.?D|B\.?S|M\.?S|B\.?Tech|M\.?Tech|BSN|MSN|BBA|MBA|Associate|Diploma)\b[^\n.;]*'
+        for line in lines:
+            deg_match = re.search(deg_pattern, line, re.IGNORECASE)
+            if deg_match:
+                education.append({
+                    "degree": deg_match.group(0).strip(),
+                    "institution": "",
+                    "year": "",
+                    "gpa": "",
+                    "details": line
+                })
+                break
 
     # Extract Projects
     proj_lines = section_content.get("projects", [])
@@ -409,6 +526,58 @@ Resume Text:
         return fallback_extract_resume_data(text)
 
 
+SKILL_REQUIREMENT_PATTERNS = (
+    ("AWS", r"\b(?:aws|amazon web services)\b"),
+    ("Azure", r"\bazure\b"),
+    ("GCP", r"\b(?:gcp|google cloud(?: platform)?)\b"),
+    ("Python", r"\bpython\b"),
+    ("JavaScript", r"\b(?:javascript|\bjs)\b"),
+    ("TypeScript", r"\b(?:typescript|\bts)\b"),
+    ("Java", r"\bjava\b(?!script)"),
+    ("C++", r"(?<!\w)c\+\+(?!\w)"),
+    ("C#", r"(?<!\w)c#(?!\w)"),
+    ("Go", r"\bgolang\b"),
+    ("React", r"\b(?:react|reactjs)\b"),
+    ("Node.js", r"\b(?:node\.?js|nodejs)\b"),
+    ("Express", r"\bexpress(?:\.js)?\b"),
+    ("FastAPI", r"\bfastapi\b"),
+    ("Django", r"\bdjango\b"),
+    ("Flask", r"\bflask\b"),
+    ("SQL", r"\bsql\b"),
+    ("PostgreSQL", r"\b(?:postgres|postgresql)\b"),
+    ("MongoDB", r"\bmongodb\b"),
+    ("Redis", r"\bredis\b"),
+    ("Docker", r"\bdocker\b"),
+    ("Kubernetes", r"\b(?:kubernetes|k8s)\b"),
+    ("Terraform", r"\bterraform\b"),
+    ("Kafka", r"\bkafka\b"),
+    ("GraphQL", r"\bgraphql\b"),
+    ("REST APIs", r"\b(?:rest(?:ful)?\s+apis?|http\s+apis?)\b"),
+    ("Git", r"\bgit\b"),
+    ("CI/CD", r"\b(?:ci\s*\/\s*cd|continuous integration|continuous delivery)\b"),
+    ("Machine Learning", r"\b(?:machine learning|ml)\b"),
+    ("PyTorch", r"\bpytorch\b"),
+    ("TensorFlow", r"\btensorflow\b"),
+    ("Pandas", r"\bpandas\b"),
+    ("NumPy", r"\bnumpy\b"),
+)
+
+
+def _extract_normalized_skill_requirements(text: str) -> list:
+    """Return known technical requirements in stable order, never generic prose tokens."""
+    if not isinstance(text, str):
+        return []
+    found = []
+    for canonical, pattern in SKILL_REQUIREMENT_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            found.append(canonical)
+    return found
+
+
+def _normalize_known_skills(text: str) -> set:
+    return {skill.lower() for skill in _extract_normalized_skill_requirements(text)}
+
+
 def get_suggestions_and_missing(resume_text: str, jd_text: str, resume_skills: list) -> dict:
     """
     Perform professional, industry-standard ATS gap analysis.
@@ -489,21 +658,14 @@ Return ONLY a valid JSON object matching this exact schema:
     except Exception as e:
         print(f"[WARN] LLM gap analysis fallback triggered: {e}")
         # Rule-based fallback comparison
-        jd_lower = jd_text.lower()
-        matched = []
-        for s in resume_skills:
-            if s.lower() in jd_lower:
-                matched.append(s)
+        jd_requirements = _extract_normalized_skill_requirements(jd_text)
+        candidate_skills = _normalize_known_skills(resume_text)
+        for skill in resume_skills if isinstance(resume_skills, list) else []:
+            if isinstance(skill, str):
+                candidate_skills.update(_normalize_known_skills(skill))
 
-        potential_jd_skills = re.findall(r'\b[A-Za-z0-9#+.-]{2,15}\b', jd_text)
-        resume_lower = resume_text.lower()
-        missing = []
-        for token in set(potential_jd_skills):
-            if len(token) > 2 and token.lower() in jd_lower and token.lower() not in resume_lower:
-                if token.lower() not in ["with", "have", "must", "work", "role", "team", "will", "from", "that", "this", "able", "year", "years"]:
-                    missing.append(token)
-                    if len(missing) >= 6:
-                        break
+        matched = [skill for skill in jd_requirements if skill.lower() in candidate_skills]
+        missing = [skill for skill in jd_requirements if skill.lower() not in candidate_skills]
 
         recs = {
             "keyword_placement": [
@@ -734,6 +896,138 @@ def _detect_role_domain(jd_text: str) -> str:
     return domain
 
 
+# ────────────────────────────────────────────────────────────
+# Skill Normalization & Experience Duration Helpers
+# ────────────────────────────────────────────────────────────
+SKILL_ALIASES = {
+    "k8s": "kubernetes",
+    "kubernetes": "k8s",
+    "postgres": "postgresql",
+    "postgresql": "postgres",
+    "js": "javascript",
+    "javascript": "js",
+    "ts": "typescript",
+    "typescript": "ts",
+    "py": "python",
+    "python": "py",
+    "aws": "amazon web services",
+    "amazon web services": "aws",
+    "gcp": "google cloud",
+    "google cloud": "gcp",
+    "google cloud platform": "gcp",
+    "react": "reactjs",
+    "reactjs": "react",
+    "node": "nodejs",
+    "nodejs": "node",
+    "rest apis": "apis",
+    "rest api": "apis",
+    "api": "apis",
+    "apis": "rest api",
+    "golang": "go",
+    "go": "golang",
+    "ci/cd": "cicd",
+    "cicd": "ci/cd",
+    "switchgear": "switchgear installation",
+    "conduit bending": "conduit",
+    "electrical wiring": "wiring"
+}
+
+
+def _parse_duration_years(duration_str: str) -> tuple:
+    """
+    Parses a duration string into (start_year, end_year) floats.
+    Handles month names, year digits, 'Present', 'Current', etc.
+    Returns (start, end) or (None, None) if dates cannot be parsed.
+    """
+    if not duration_str or not isinstance(duration_str, str):
+        return (None, None)
+
+    current_year = 2024.0
+    d_clean = duration_str.strip().lower()
+
+    years = [float(y) for y in re.findall(r'\b(19\d\d|20\d\d)\b', d_clean)]
+    has_present = any(w in d_clean for w in ['present', 'current', 'now', 'today'])
+
+    if len(years) >= 2:
+        start_yr, end_yr = years[0], years[1]
+        if start_yr > end_yr:
+            start_yr, end_yr = end_yr, start_yr
+        return (start_yr, end_yr)
+    elif len(years) == 1:
+        if has_present:
+            return (years[0], max(years[0], current_year))
+        elif 'summer' in d_clean or 'intern' in d_clean:
+            return (years[0], years[0] + 0.25)
+        else:
+            return (years[0], years[0] + 1.0)
+    elif has_present:
+        return (current_year - 1.0, current_year)
+    return (None, None)
+
+
+def _estimate_total_experience_years(exp_entries: list, text: str = "") -> tuple:
+    """
+    Calculates total non-overlapping years of experience across all roles.
+    Merges overlapping date intervals to avoid double-counting concurrent employment.
+    Returns (total_years: float, is_confident: bool).
+    """
+    intervals = []
+    for entry in exp_entries:
+        dur_str = entry.get('duration', '') if isinstance(entry, dict) else ''
+        if not dur_str and isinstance(entry, dict):
+            combined_entry = (str(entry.get('role', '')) + " " + str(entry.get('company', '')) + " " + " ".join([str(b) for b in entry.get('bullets', [])]))
+            dur_match = re.search(r'\b(?:19|20)\d{2}\s*(?:-|–|to)\s*(?:(?:19|20)\d{2}|present|current)\b', combined_entry, re.I)
+            if dur_match:
+                dur_str = dur_match.group(0)
+
+        start, end = _parse_duration_years(dur_str)
+        if start is not None and end is not None and end >= start:
+            intervals.append((start, end))
+
+    if not intervals:
+        return (0.0, False)
+
+    intervals.sort(key=lambda x: x[0])
+    merged = [intervals[0]]
+    for current in intervals[1:]:
+        prev_start, prev_end = merged[-1]
+        if current[0] <= prev_end:
+            merged[-1] = (prev_start, max(prev_end, current[1]))
+        else:
+            merged.append(current)
+
+    total_years = sum(end - start for start, end in merged)
+    return (round(total_years, 1), True)
+
+
+def _extract_narrative_evidence_text(text: str) -> str:
+    """
+    Extracts sentences containing action verbs, role duties, or narrative context
+    from raw text, while excluding standalone ungrounded skill dump blocks.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+    action_indicators = (
+        'architect', 'develop', 'engineer', 'build', 'manage', 'lead', 'spearhead', 'optimize',
+        'integrate', 'design', 'automate', 'coordinate', 'triage', 'treat', 'administer', 'care',
+        'conduct', 'research', 'create', 'implement', 'operate', 'support', 'maintain', 'perform',
+        'deliver', 'direct', 'supervise', 'audit', 'analyze', 'reconcile', 'install', 'wire',
+        'test', 'deploy', 'handled', 'filed', 'answered', 'using', 'with', 'utilizing', 'leveraging',
+        'responsible for', 'experience in'
+    )
+    chunks = re.split(r'[\n\.\;]+', text)
+    narrative = []
+    for chunk in chunks:
+        c = chunk.strip().lower()
+        if not c or len(c) < 5:
+            continue
+        if re.match(r'^(?:skills|technical\s+skills|core\s+competencies|technologies)\b', c):
+            continue
+        if any(v in c for v in action_indicators):
+            narrative.append(c)
+    return " ".join(narrative)
+
+
 def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: list, missing_skills: list, text: str) -> tuple:
     """
     Industry-Standard 5-Pillar Weighted ATS Scoring Model (Jobscan & Resume Worded standard):
@@ -743,33 +1037,11 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
     - Pillar 4: Content Impact & Action Verbs (10 pts max)
     - Pillar 5: ATS Formatting & Parseability (10 pts max)
     """
-    # ── 1. Skills & Keyword Match (40 pts max) ───────────────────
-    valid_matched = [s for s in matched_skills if isinstance(s, str) and s.strip()] if isinstance(matched_skills, list) else []
-    valid_missing = [s for s in missing_skills if isinstance(s, str) and s.strip()] if isinstance(missing_skills, list) else []
+    # ── Preparation of Structured Evidence ───────────────────────
+    text_lower = (text or "").lower()
+    jd_lower = (jd_text or "").lower()
 
-    total_jd_skills = len(valid_matched) + len(valid_missing)
-    if total_jd_skills > 0:
-        skill_ratio = len(valid_matched) / total_jd_skills
-        if len(valid_missing) == 0 and len(valid_matched) >= 5:
-            skill_score = 40
-        else:
-            skill_score = round(skill_ratio * 40)
-        skill_explanation = f"Matched {len(valid_matched)} of {total_jd_skills} identified target requirements ({round(skill_ratio * 100)}% coverage)."
-    else:
-        # Zero skills extracted or identified from job description -> 0 score
-        skill_score = 0
-        skill_explanation = "No identifiable technical skills or qualifications detected in job description (0/40)."
-
-    skill_score = _clamp_pillar(skill_score, 0, 40)
-    skill_pct = round((skill_score / 40) * 100) if skill_score > 0 else 0
-    skill_evidence = {
-        "matched_count": len(valid_matched),
-        "missing_count": len(valid_missing),
-        "total_jd_skills": total_jd_skills,
-        "coverage_percentage": skill_pct
-    }
-
-    # ── 2. Experience & Role Alignment (25 pts max) ─────────────
+    # Experience entries and text
     exp = resume_data.get('experience', []) if isinstance(resume_data, dict) else []
     exp_entries = []
     exp_bullets = []
@@ -779,6 +1051,7 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
             if isinstance(e, dict):
                 role = str(e.get('role', '') or '').strip()
                 company = str(e.get('company', '') or '').strip()
+                dur = str(e.get('duration', '') or '').strip()
                 bullets = e.get('details', [])
                 valid_b = []
                 if isinstance(bullets, list):
@@ -786,18 +1059,147 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
                 elif isinstance(bullets, str) and bullets.strip():
                     valid_b = [bullets.strip()]
                 if role or company or valid_b:
-                    exp_entries.append({'role': role, 'company': company, 'bullets': valid_b})
+                    exp_entries.append({'role': role, 'company': company, 'duration': dur, 'bullets': valid_b})
                     exp_bullets.extend(valid_b)
             elif isinstance(e, str) and e.strip():
                 exp_bullets.append(e.strip())
-                exp_entries.append({'role': '', 'company': '', 'bullets': [e.strip()]})
+                exp_entries.append({'role': '', 'company': '', 'duration': '', 'bullets': [e.strip()]})
     elif isinstance(exp, str) and exp.strip():
         exp_bullets.append(exp.strip())
-        exp_entries.append({'role': '', 'company': '', 'bullets': [exp.strip()]})
+        exp_entries.append({'role': '', 'company': '', 'duration': '', 'bullets': [exp.strip()]})
 
     exp_text = " ".join(exp_bullets).strip()
 
-    # If no verifiable experience entries exist, award 0 points
+    # Education structured text
+    edu_list = resume_data.get('education', []) if isinstance(resume_data, dict) else []
+    edu_str_parts = []
+    if isinstance(edu_list, list):
+        for e in edu_list:
+            if isinstance(e, dict):
+                edu_str_parts.extend([str(v) for v in e.values() if v])
+            elif isinstance(e, str):
+                edu_str_parts.append(e)
+    elif isinstance(edu_list, str):
+        edu_str_parts.append(edu_list)
+
+    edu_text = " ".join(edu_str_parts).lower()
+    combined_edu_text = (text_lower + " " + edu_text).strip()
+
+    # Projects text
+    projects_desc = " ".join([p.get('description', '') if isinstance(p, dict) else str(p) for p in (resume_data.get('projects', []) if isinstance(resume_data, dict) else [])])
+
+    # Certifications text
+    certs_list_raw = resume_data.get('certifications', []) if isinstance(resume_data, dict) else []
+    if isinstance(certs_list_raw, str):
+        certs_list_raw = [certs_list_raw]
+    elif not isinstance(certs_list_raw, list):
+        certs_list_raw = []
+    certs_text = " ".join([str(c) for c in certs_list_raw]).lower()
+
+    # Narrative work & accomplishment sentences from raw text (excluding pure keyword dump blocks)
+    narrative_text = _extract_narrative_evidence_text(text)
+
+    # Combined candidate evidence text for grounding skills
+    # Grounding requires structured experience, projects, education, certifications, or verified narrative statements
+    evidence_text = (exp_text + " " + projects_desc + " " + edu_text + " " + certs_text + " " + narrative_text).lower()
+
+    # ── 1. Skills & Keyword Match (40 pts max) ───────────────────
+    valid_matched = [s for s in matched_skills if isinstance(s, str) and s.strip()] if isinstance(matched_skills, list) else []
+    valid_missing = [s for s in missing_skills if isinstance(s, str) and s.strip()] if isinstance(missing_skills, list) else []
+
+    # Evidence-Aware Skill Grounding:
+    # Distinguish skills supported by work, projects, or education from ungrounded keyword lists
+    evidenced_skills = []
+    unverified_skills = []
+    for s in valid_matched:
+        s_low = s.lower().strip()
+        alias = SKILL_ALIASES.get(s_low, "")
+        is_evidenced = (
+            (len(s_low) >= 2 and re.search(r'\b' + re.escape(s_low) + r'\b', evidence_text)) or
+            (bool(alias) and re.search(r'\b' + re.escape(alias) + r'\b', evidence_text)) or
+            s_low in exp_text.lower() or
+            s_low in projects_desc.lower()
+        )
+        if is_evidenced:
+            evidenced_skills.append(s)
+        else:
+            unverified_skills.append(s)
+
+    # Effective matched count: evidenced skills earn full credit, unverified/listed-only skills earn 50% partial credit
+    effective_matched = len(evidenced_skills) + (0.50 * len(unverified_skills))
+    total_jd_skills = len(valid_matched) + len(valid_missing)
+
+    # Detect if JD explicitly differentiates required vs preferred skills
+    jd_req_clause = ""
+    jd_pref_clause = ""
+    req_match = re.search(r'\b(?:required\s+(?:qualifications|skills|requirements)?|must\s+have)\b[:\s-]*([^.\n;]+)', jd_lower)
+    if req_match:
+        jd_req_clause = req_match.group(1)
+    pref_match = re.search(r'\b(?:preferred\s+(?:qualifications|skills)?|nice\s+to\s+have|a\s+plus|bonus)\b[:\s-]*([^.\n;]+)', jd_lower)
+    if pref_match:
+        jd_pref_clause = pref_match.group(1)
+
+    has_explicit_split = bool(jd_req_clause and jd_pref_clause)
+
+    if total_jd_skills > 0:
+        if has_explicit_split:
+            # Separate required vs preferred skill coverage (Stage 4)
+            req_matched = [s for s in valid_matched if s.lower() in jd_req_clause]
+            pref_matched = [s for s in valid_matched if s.lower() in jd_pref_clause]
+            req_missing = [s for s in valid_missing if s.lower() in jd_req_clause]
+            pref_missing = [s for s in valid_missing if s.lower() in jd_pref_clause]
+
+            total_req = len(req_matched) + len(req_missing)
+            total_pref = len(pref_matched) + len(pref_missing)
+
+            req_evidenced = [s for s in req_matched if s in evidenced_skills]
+            req_effective = len(req_evidenced) + 0.50 * (len(req_matched) - len(req_evidenced))
+            cov_req = min(1.0, max(0.0, req_effective / total_req)) if total_req > 0 else 0.0
+
+            pref_evidenced = [s for s in pref_matched if s in evidenced_skills]
+            pref_effective = len(pref_evidenced) + 0.50 * (len(pref_matched) - len(pref_evidenced))
+            cov_pref = min(1.0, max(0.0, pref_effective / total_pref)) if total_pref > 0 else 0.0
+
+            # Dynamic weighting: 80% req / 20% pref if both present; 100% to single clause if only one populated
+            if total_req > 0 and total_pref > 0:
+                skill_score = round((cov_req * 32.0) + (cov_pref * 8.0))
+            elif total_req > 0:
+                skill_score = round(cov_req * 40.0)
+            elif total_pref > 0:
+                skill_score = round(cov_pref * 40.0)
+            else:
+                skill_score = round(skill_ratio * 40.0)
+            skill_ratio = effective_matched / total_jd_skills
+        else:
+            skill_ratio = effective_matched / total_jd_skills
+            if len(valid_missing) == 0 and len(unverified_skills) == 0 and len(valid_matched) >= 5:
+                skill_score = 40
+            else:
+                skill_score = round(skill_ratio * 40)
+
+        grounding_pct = round((len(evidenced_skills) / max(1, len(valid_matched))) * 100) if valid_matched else 0
+        skill_explanation = (
+            f"Matched {len(valid_matched)} of {total_jd_skills} identified target requirements ({round(skill_ratio * 100)}% effective coverage). "
+            f"{len(evidenced_skills)} skill(s) grounded in experience/projects ({grounding_pct}%), {len(unverified_skills)} unverified in listing only."
+        )
+    else:
+        skill_score = 0
+        skill_explanation = "No identifiable technical skills or qualifications detected in job description (0/40)."
+
+    skill_score = _clamp_pillar(skill_score, 0, 40)
+    skill_pct = round((skill_score / 40) * 100) if skill_score > 0 else 0
+    skill_evidence = {
+        "matched_count": len(valid_matched),
+        "missing_count": len(valid_missing),
+        "total_jd_skills": total_jd_skills,
+        "evidenced_skills_count": len(evidenced_skills),
+        "unverified_skills_count": len(unverified_skills),
+        "evidenced_skills": evidenced_skills,
+        "unverified_skills": unverified_skills,
+        "coverage_percentage": skill_pct
+    }
+
+    # ── 2. Experience & Role Alignment (25 pts max) ─────────────
     if not exp_entries or len(exp_text) < 15:
         exp_score = 0
         exp_explanation = "No verifiable professional experience entries detected in resume text (0/25)."
@@ -807,7 +1209,9 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
             "metric_bullets_count": 0,
             "semantic_similarity": 0.0,
             "skills_in_experience": 0,
-            "role_title_aligned": False
+            "role_title_aligned": False,
+            "estimated_experience_years": 0.0,
+            "duration_estimation_confident": False
         }
     else:
         # A. Semantic Relevance (supporting evidence)
@@ -834,20 +1238,24 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
         exp_words = set(re.findall(r'\b[a-z]{3,15}\b', exp_text.lower()))
         lexical_overlap = len(jd_words & exp_words) / max(1, len(jd_words)) if jd_words else 0.0
 
-        # Use lexical overlap if embedding model is unavailable or yielded zero
         if embedding_model is None:
             sim_factor = min(1.0, lexical_overlap * 2.5)
 
         # B. Demonstrated Skill Application in Professional Experience
         exp_text_lower = exp_text.lower()
-        skills_in_exp = [s for s in valid_matched if s.lower() in exp_text_lower]
-        skill_app_ratio = len(skills_in_exp) / max(1, len(valid_matched)) if valid_matched else 0.0
+        skills_in_exp = [
+            s for s in valid_matched
+            if s.lower() in exp_text_lower or (SKILL_ALIASES.get(s.lower(), "") and SKILL_ALIASES[s.lower()] in exp_text_lower)
+        ]
+        skill_app_ratio = min(1.0, len(skills_in_exp) / max(1, min(3, len(valid_matched)))) if valid_matched else 0.0
 
         # C. Role Title Alignment
         has_role_match = False
         if jd_sample:
             for entry in exp_entries:
                 r_lower = entry['role'].lower()
+                if any(hw in r_lower for hw in ['helper', 'assistant', 'apprentice']) and not any(hw in jd_sample.lower() for hw in ['helper', 'assistant', 'apprentice']):
+                    continue
                 if any(w in r_lower for w in jd_words if len(w) > 4):
                     has_role_match = True
                     break
@@ -857,24 +1265,36 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
         # Combined relevance factor (0.0 to 1.0)
         relevance_score = max(0.0, min(1.0, (0.55 * sim_factor) + (0.40 * skill_app_ratio) + role_boost))
 
-        # D. Professional Substance & Accomplishment Evidence (0.0 to 1.0)
+        # D. Conservative Experience Duration & Seniority Assessment (Stage 5)
+        est_years, duration_confident = _estimate_total_experience_years(exp_entries, text)
+
+        # Check for explicit experience duration requirement in JD
+        jd_req_years_match = re.search(r'\b(\d+)\+?\s*(?:-\s*\d+\s*)?years?\b(?:\s+of\s+(?:industry\s+|relevant\s+|professional\s+)?experience)?', jd_lower)
+        jd_required_years = float(jd_req_years_match.group(1)) if jd_req_years_match else None
+
+        duration_factor = 1.0
+        if jd_required_years and jd_required_years > 0 and duration_confident:
+            if est_years < jd_required_years:
+                duration_factor = max(0.40, min(1.0, est_years / jd_required_years))
+
+        # E. Professional Substance & Accomplishment Evidence (0.0 to 1.0)
         role_count = len(exp_entries)
         detailed_bullets = [b for b in exp_bullets if len(b) >= 25]
         metric_bullets = [b for b in exp_bullets if re.search(r'\b(?:\d+[\%kKmM\+]?|\d+\.\d+)\b', b)]
 
         depth_score = 0.4  # Baseline for structured roles
-        if role_count >= 2:
+        if role_count >= 2 or est_years >= 4.0:
             depth_score += 0.2
-        if len(detailed_bullets) >= 3:
+        if len(detailed_bullets) >= 2:
             depth_score += 0.2
-        if len(metric_bullets) >= 2:
+        if len(metric_bullets) >= 1:
             depth_score += 0.2
         depth_score = min(1.0, depth_score)
 
         # Synthesis (25 pts max):
         # Relevance: up to 18 pts
         # Substance: up to 7 pts, gated by relevance (irrelevant depth earns minimal credit)
-        raw_exp_score = (relevance_score * 18.0) + (depth_score * 7.0 * (0.15 + 0.85 * relevance_score))
+        raw_exp_score = ((relevance_score * 18.0) + (depth_score * 7.0 * (0.15 + 0.85 * relevance_score))) * duration_factor
         exp_score = _clamp_pillar(raw_exp_score, 0, 25)
 
         exp_evidence = {
@@ -883,7 +1303,9 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
             "metric_bullets_count": len(metric_bullets),
             "semantic_similarity": round(sim_factor, 2),
             "skills_in_experience": len(skills_in_exp),
-            "role_title_aligned": has_role_match
+            "role_title_aligned": has_role_match,
+            "estimated_experience_years": est_years,
+            "duration_estimation_confident": duration_confident
         }
         if relevance_score >= 0.70:
             exp_explanation = f"Strong domain alignment ({round(sim_factor * 100)}% similarity). Demonstrated {len(skills_in_exp)} key skill(s) across {role_count} role(s) with {len(metric_bullets)} quantified bullet(s)."
@@ -895,26 +1317,10 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
     exp_pct = round((exp_score / 25) * 100) if exp_score > 0 else 0
 
     # ── 3. Education & Credentials (15 pts max) ─────────────────
-    text_lower = (text or "").lower()
-    jd_lower = (jd_text or "").lower()
     target_domain, domain_meta = _classify_role_domain(jd_text)
     domain_info = ROLE_DOMAINS.get(target_domain, {})
     secondary_domain = domain_meta.get("secondary_domain")
     secondary_info = ROLE_DOMAINS.get(secondary_domain, {}) if secondary_domain else {}
-
-    # Extract structured education entries to ensure both structured and raw text evidence are checked
-    edu_list = resume_data.get('education', []) if isinstance(resume_data, dict) else []
-    edu_str_parts = []
-    if isinstance(edu_list, list):
-        for e in edu_list:
-            if isinstance(e, dict):
-                edu_str_parts.extend([str(v) for v in e.values() if v])
-            elif isinstance(e, str):
-                edu_str_parts.append(e)
-    elif isinstance(edu_list, str):
-        edu_str_parts.append(edu_list)
-
-    combined_edu_text = (text_lower + " " + " ".join(edu_str_parts).lower()).strip()
 
     # Check for degrees in structured education and full text
     has_primary_degree = any(d in combined_edu_text for d in domain_info.get("primary_degrees", []))
@@ -957,7 +1363,6 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
                 else:
                     has_completed_degree = True
 
-    # If structured education didn't identify status or in raw text fallback:
     if not has_completed_degree and not has_in_progress_degree:
         edu_lines = [l.strip().lower() for l in text_lower.split('\n') if l.strip()]
         raw_completed = False
@@ -991,9 +1396,9 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
         certs_list = []
 
     # Detect if the job description explicitly requires or prefers an educational degree
-    degree_req_pattern = r'\b(?:bachelor|master|phd|doctorate|degree)\b.*?\b(?:required|mandatory|must\s+have)\b|\b(?:required|mandatory|must\s+have)\b.*?\b(?:bachelor|master|phd|doctorate|degree)\b'
+    degree_req_pattern = r'\b(?:bachelor|master|phd|doctorate|degree)\b[^.\n;]{0,80}\b(?:required|mandatory|must\s+have)\b|\b(?:required|mandatory|must\s+have)\b[^.\n;]{0,80}\b(?:bachelor|master|phd|doctorate|degree)\b'
     degree_required_in_jd = bool(re.search(degree_req_pattern, jd_lower))
-    degree_pref_pattern = r'\b(?:bachelor|master|phd|doctorate|degree)\b.*?\b(?:preferred|desired|a\s+plus)\b|\b(?:preferred|desired|a\s+plus)\b.*?\b(?:bachelor|master|phd|doctorate|degree)\b'
+    degree_pref_pattern = r'\b(?:bachelor|master|phd|doctorate|degree)\b[^.\n;]{0,80}\b(?:preferred|desired|a\s+plus)\b|\b(?:preferred|desired|a\s+plus)\b[^.\n;]{0,80}\b(?:bachelor|master|phd|doctorate|degree)\b'
     degree_preferred_in_jd = bool(re.search(degree_pref_pattern, jd_lower))
 
     # Detect if the role explicitly welcomes/accepts currently enrolled students or interns
@@ -1001,11 +1406,12 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
     job_accepts_enrolled = bool(re.search(job_accepts_enrolled_pattern, jd_lower))
 
     # Detect if the job description explicitly requires or prefers a professional credential or license
+    # Sentence-bounded regex [^.\n;]{0,80} prevents cross-sentence bleed (Stage 2)
     mandatory_creds_in_jd = []
     preferred_creds_in_jd = []
     for cert_kw in domain_info.get("relevant_certs", []):
-        mand_pattern = rf'\b(?:required|mandatory|must\s+(?:have|possess|hold)|license\s+required)\b.*?{re.escape(cert_kw)}\b|{re.escape(cert_kw)}\b.*?\b(?:required|mandatory|license\s+required)\b'
-        pref_pattern = rf'\b(?:preferred|a\s+plus|bonus|nice\s+to\s+have|desired|advantage)\b.*?{re.escape(cert_kw)}\b|{re.escape(cert_kw)}\b.*?\b(?:preferred|a\s+plus|desired|bonus)\b'
+        mand_pattern = rf'\b(?:required|mandatory|must\s+(?:have|possess|hold)|license\s+required)\b[^.\n;]{{0,80}}\b{re.escape(cert_kw)}\b|{re.escape(cert_kw)}\b[^.\n;]{{0,80}}\b(?:required|mandatory|license\s+required)\b'
+        pref_pattern = rf'\b(?:preferred|a\s+plus|bonus|nice\s+to\s+have|desired|advantage)\b[^.\n;]{{0,80}}\b{re.escape(cert_kw)}\b|{re.escape(cert_kw)}\b[^.\n;]{{0,80}}\b(?:preferred|a\s+plus|desired|bonus)\b'
         if re.search(mand_pattern, jd_lower):
             mandatory_creds_in_jd.append(cert_kw)
         elif re.search(pref_pattern, jd_lower):
@@ -1080,9 +1486,18 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
         degree_label = "General / Non-Domain Degree"
     elif relevant_certs_found:
         # Alternative career pathway / vocational credential without traditional degree
-        degree_score = 6
-        degree_desc = f"Alternative career pathway / vocational credential in {target_domain.capitalize()} (+6 pts)"
-        degree_label = "Vocational / Alternative Pathway"
+        has_vocational_cred = any(
+            any(vk in c.lower() for vk in ['journeyman', 'master', 'technician', 'electrician', 'contractor', 'trade', 'vocational', 'apprentice'])
+            for c in relevant_certs_found
+        )
+        if has_vocational_cred or target_domain != "trades":
+            degree_score = 6
+            degree_desc = f"Alternative career pathway / vocational credential in {target_domain.capitalize()} (+6 pts)"
+            degree_label = "Vocational / Alternative Pathway"
+        else:
+            degree_score = 0
+            degree_desc = f"No collegiate degree or recognized vocational trade qualification identified (0 pts)"
+            degree_label = "None Identified"
     else:
         degree_score = 0
         if degree_required_in_jd:
@@ -1100,7 +1515,7 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
     elif preferred_matched:
         cert_score = 3
         cert_desc = f", plus documented candidate-reported preferred credential ({', '.join(preferred_matched)}) (+3 pts)"
-    elif relevant_certs_found:
+    elif relevant_certs_found and not mandatory_creds_in_jd:
         cert_score = 3
         cert_desc = f", plus {len(relevant_certs_found)} candidate-reported domain-relevant certification(s) (+3 pts)"
 
@@ -1109,7 +1524,7 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
     elif unrelated_certs_found and not mandatory_matched and not preferred_matched and not relevant_certs_found:
         cert_desc += f", though {len(unrelated_certs_found)} certification(s) found are unrelated to target {target_domain} domain (0 pts)"
 
-    # Academic honors / GPA scoring (requires degree or qualification baseline)
+    # Academic honors / GPA scoring
     has_honors = bool(
         ('gpa' in combined_edu_text or 'cgpa' in combined_edu_text or 'honor' in combined_edu_text or 'magna cum laude' in combined_edu_text or 'summa cum laude' in combined_edu_text)
         and degree_score > 0
@@ -1129,6 +1544,16 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
     missing_mandatory_degree = bool(
         degree_required_in_jd and not (has_primary_degree or has_allied_degree)
     )
+
+    # Determine explicit qualification status (documented_match, not_found, uncertain, not_applicable)
+    if missing_mandatory_creds or missing_mandatory_degree:
+        qualification_status = "not_found"
+    elif has_in_progress_degree and not has_completed_degree and not job_accepts_enrolled:
+        qualification_status = "uncertain"
+    elif mandatory_creds_in_jd or degree_required_in_jd:
+        qualification_status = "documented_match"
+    else:
+        qualification_status = "not_applicable"
 
     warnings = []
     if missing_mandatory_creds:
@@ -1198,13 +1623,13 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
         "preferred_credentials_matched": preferred_matched,
         "preferred_credentials_missing": [c.upper() for c in missing_preferred_creds],
         "honors_or_gpa_detected": has_honors,
+        "qualification_status": qualification_status,
         "warnings": qualification_warnings,
         "structured_warnings": warnings,
         "disclaimer": "Qualification matching is based on automated text parsing. Absence of a keyword in the resume indicates a missing document match, not an automatic disqualification; verify credentials directly with the applicant."
     }
 
     # ── 4. Content Impact & Action Verbs (10 pts max) ───────────
-    projects_desc = " ".join([p.get('description', '') if isinstance(p, dict) else str(p) for p in (resume_data.get('projects', []) if isinstance(resume_data, dict) else [])])
     metric_matches = re.findall(r'\b(?:\d+[\%kKmM\+]?|\d+\.\d+)\b', exp_text + " " + projects_desc)
     action_verbs = ['architected', 'developed', 'built', 'engineered', 'optimized', 'integrated', 'designed', 'automated', 'led', 'spearheaded', 'resolved', 'trained', 'mentored', 'implemented']
     verb_count = sum(1 for v in action_verbs if v in text_lower)
@@ -1234,18 +1659,52 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
     }
 
     # ── 5. ATS Formatting & Parseability (10 pts max) ───────────
-    c_info = resume_data.get('candidate_info', {}) if isinstance(resume_data, dict) else {}
-    has_email = bool(c_info.get('email')) if isinstance(c_info, dict) else False
-    has_phone = bool(c_info.get('phone')) if isinstance(c_info, dict) else False
-    has_links = bool(c_info.get('linkedin') or c_info.get('github')) if isinstance(c_info, dict) else False
+    c_info = {}
+    if isinstance(resume_data, dict):
+        c_info = resume_data.get('candidate_info') or resume_data.get('contact') or {}
+    if not isinstance(c_info, dict):
+        c_info = {}
+    has_email = bool(c_info.get('email') or re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text_lower))
+    has_phone = bool(c_info.get('phone') or re.search(r'\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', text_lower))
+    has_links = bool(c_info.get('linkedin') or c_info.get('github') or re.search(r'(?:linkedin\.com|github\.com)', text_lower))
+
+    # Check extracted structural sections (Stage 6)
+    has_exp_section = bool(exp_entries and len(exp_text.strip()) >= 15)
+    has_edu_section = bool(has_completed_degree or has_in_progress_degree or has_any_accredited_degree or (edu_list and len(edu_list) > 0))
+    has_skills_section = bool(isinstance(resume_data, dict) and bool(resume_data.get('skills')))
+    has_projects_section = bool(isinstance(resume_data, dict) and bool(resume_data.get('projects')))
+
+    sections_extracted = []
+    if has_exp_section:
+        sections_extracted.append("Experience")
+    if has_edu_section:
+        sections_extracted.append("Education")
+    if has_skills_section:
+        sections_extracted.append("Skills")
+    if has_projects_section:
+        sections_extracted.append("Projects")
 
     parse_score = 0
     if len(text_lower.strip()) >= 50:
-        parse_score = 4
+        # Base readable machine text (2 pts)
+        parse_score = 2
+
+        # Contact information completeness (up to 4 pts)
         if has_email and has_phone:
             parse_score += 3
+        elif has_email or has_phone:
+            parse_score += 1
         if has_links:
+            parse_score += 1
+
+        # Section extraction completeness (up to 4 pts)
+        core_sections_count = sum([has_exp_section, has_edu_section, has_skills_section])
+        if core_sections_count == 3:
+            parse_score += 4
+        elif core_sections_count >= 2:
             parse_score += 3
+        elif core_sections_count >= 1:
+            parse_score += 1
 
         contact_items = []
         if has_email and has_phone:
@@ -1256,7 +1715,9 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
             contact_items.append("missing contact info")
         if has_links:
             contact_items.append("verified professional profile links (LinkedIn/GitHub)")
-        parse_explanation = f"Clean machine-readable text with {', '.join(contact_items)}. (Measures document parseability, not job qualification)."
+
+        sec_summary = f"{len(sections_extracted)} parsed sections ({', '.join(sections_extracted)})" if sections_extracted else "sparse sections"
+        parse_explanation = f"Clean machine-readable text with {', '.join(contact_items)} and {sec_summary}. (Measures ATS document parseability, not job qualification)."
     else:
         parse_explanation = "Unparseable or empty document text (0/10)."
 
@@ -1266,7 +1727,12 @@ def compute_industry_ats_score(resume_data: dict, jd_text: str, matched_skills: 
         "text_length": len(text_lower.strip()),
         "has_email": has_email,
         "has_phone": has_phone,
-        "has_links": has_links
+        "has_links": has_links,
+        "extracted_sections": sections_extracted,
+        "has_experience_section": has_exp_section,
+        "has_education_section": has_edu_section,
+        "has_skills_section": has_skills_section,
+        "has_projects_section": has_projects_section
     }
 
     # ── Overall Score & Match Level ─────────────────────────────
@@ -1347,7 +1813,7 @@ def run_analysis(pdf_bytes: bytes, job_description: str) -> dict:
     # Validate job description
     jd_clean = (job_description or "").strip()
     if len(jd_clean) < 30:
-        raise ValueError("Job description is too short or invalid to perform skills evaluation.")
+        raise RequestValidationError("Job description is too short or invalid to perform skills evaluation.")
 
     # 2. Extract structured resume data
     print("[NLP] Extracting structured resume sections...")
@@ -1384,10 +1850,13 @@ def run_analysis(pdf_bytes: bytes, job_description: str) -> dict:
             evaluation_notes.append(w)
 
     # 5. Build final payload
+    qualification_status = breakdown.get("education_credentials", {}).get("evidence", {}).get("qualification_status", "not_applicable")
     payload = {
         "status": "completed",
         "score": score,
+        "role_match_score": score,
         "match_level": match_level,
+        "qualification_status": qualification_status,
         "scoring_breakdown": breakdown,
         "evaluation_notes": evaluation_notes,
         "matched_skills": matched_skills,
@@ -1434,15 +1903,40 @@ def process_analysis_worker(pdf_bytes: bytes, job_description: str, webhook_url:
 # ROUTES
 # ────────────────────────────────────────────────────────────
 
+def _requires_internal_auth() -> bool:
+    """Require service authentication outside an explicitly local development mode."""
+    configured = os.environ.get("REQUIRE_INTERNAL_AUTH")
+    if configured is not None:
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    environment = os.environ.get("NODE_ENV") or os.environ.get("FLASK_ENV") or "production"
+    return environment.strip().lower() != "development"
+
+
+def _authorize_internal_request():
+    """Return a Flask error response when an internal service call is unauthorized."""
+    expected_token = os.environ.get("INTERNAL_NLP_TOKEN", "").strip()
+    provided_token = request.headers.get("X-Internal-Token", "").strip()
+
+    if _requires_internal_auth() and not expected_token:
+        app.logger.error("INTERNAL_NLP_TOKEN is required but not configured.")
+        return jsonify({"error": "Internal service authentication is unavailable."}), 503
+
+    if expected_token and not hmac.compare_digest(provided_token, expected_token):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    return None
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
         "status": "OK",
         "service": "AI Resume Analyzer",
-        "groq_ready": bool(GROQ_API_KEY),
-        "llm_ready": bool(GROQ_API_KEY or (API_KEY and API_KEY != "YOUR_GEMINI_API_KEY_HERE")),
+        "groq_ready": bool(GROQ_API_KEY and GROQ_MODELS),
+        "gemini_ready": bool(gemini_client),
+        "llm_ready": bool((GROQ_API_KEY and GROQ_MODELS) or gemini_client),
         "embeddings_ready": embedding_model is not None,
-        "supported_models": [f"{m} (Groq)" for m in GROQ_MODELS] if GROQ_API_KEY else LLM_MODELS
+        "supported_models": [f"{m} (Groq)" for m in GROQ_MODELS] if GROQ_API_KEY and GROQ_MODELS else LLM_MODELS,
+        "internal_auth_required": _requires_internal_auth(),
     })
 
 
@@ -1450,10 +1944,9 @@ def health():
 def analyze_sync():
     """Synchronous analysis endpoint: directly parses and returns results."""
     # Service Authentication check
-    expected_token = os.environ.get('INTERNAL_NLP_TOKEN', '')
-    provided_token = request.headers.get('X-Internal-Token', '')
-    if expected_token and provided_token != expected_token:
-        return jsonify({"error": "Unauthorized"}), 401
+    auth_error = _authorize_internal_request()
+    if auth_error:
+        return auth_error
 
     if 'resume' not in request.files:
         return jsonify({"error": "No resume file provided"}), 400
@@ -1468,18 +1961,19 @@ def analyze_sync():
         pdf_bytes = resume_file.read()
         payload = run_analysis(pdf_bytes, job_description)
         return jsonify(payload), 200
-    except Exception as e:
-        print(f"[ERROR] Analysis error: {e}")
-        return jsonify({"status": "failed", "error": str(e)}), 500
+    except RequestValidationError as error:
+        return jsonify({"status": "failed", "error": str(error)}), 400
+    except Exception:
+        app.logger.exception("Analysis failed unexpectedly")
+        return jsonify({"status": "failed", "error": "Analysis could not be completed. Please try again."}), 500
 
 
 @app.route('/analyze/async', methods=['POST'])
 def analyze_async():
     """Asynchronous analysis endpoint: runs in background thread and fires webhook."""
-    expected_token = os.environ.get('INTERNAL_NLP_TOKEN', '')
-    provided_token = request.headers.get('X-Internal-Token', '')
-    if expected_token and provided_token != expected_token:
-        return jsonify({"error": "Unauthorized"}), 401
+    auth_error = _authorize_internal_request()
+    if auth_error:
+        return auth_error
 
     if 'resume' not in request.files:
         return jsonify({"error": "No resume file provided"}), 400
@@ -1498,7 +1992,7 @@ def analyze_async():
 
     thread = threading.Thread(
         target=process_analysis_worker,
-        args=(pdf_bytes, job_description, webhook_url, provided_token)
+        args=(pdf_bytes, job_description, webhook_url, request.headers.get('X-Internal-Token', '').strip())
     )
     thread.daemon = True
     thread.start()

@@ -3,6 +3,11 @@
 const mongoose = require('mongoose');
 
 const DAILY_LIMIT = 5;
+const QUOTA_TIME_ZONE = process.env.QUOTA_TIME_ZONE || 'UTC';
+
+if (QUOTA_TIME_ZONE !== 'UTC') {
+  throw new Error('Only the explicit UTC quota policy is supported at this time.');
+}
 
 const userDailyQuotaSchema = new mongoose.Schema(
   {
@@ -40,23 +45,21 @@ const userDailyQuotaSchema = new mongoose.Schema(
 userDailyQuotaSchema.index({ user: 1, dateKey: 1 }, { unique: true });
 
 /**
- * Returns 'YYYY-MM-DD' date string for the given date in local server time.
+ * Returns 'YYYY-MM-DD' date string for the documented UTC quota policy.
  */
 const getLocalDateKey = (date = new Date()) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 };
 
 /**
- * Returns midnight-to-midnight boundary Date objects for the given date in local server time.
+ * Returns midnight-to-midnight boundary Date objects for the documented UTC quota policy.
  */
 const getLocalDayBounds = (date = new Date()) => {
-  const startOfDay = new Date(date);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(date);
-  endOfDay.setHours(24, 0, 0, 0);
+  const startOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
   return { startOfDay, endOfDay };
 };
 
@@ -230,6 +233,7 @@ const UserDailyQuota = mongoose.model('UserDailyQuota', userDailyQuotaSchema);
 
 module.exports = UserDailyQuota;
 module.exports.DAILY_LIMIT = DAILY_LIMIT;
+module.exports.QUOTA_TIME_ZONE = QUOTA_TIME_ZONE;
 module.exports.getLocalDateKey = getLocalDateKey;
 module.exports.getLocalDayBounds = getLocalDayBounds;
 module.exports.reserveDailyQuota = reserveDailyQuota;

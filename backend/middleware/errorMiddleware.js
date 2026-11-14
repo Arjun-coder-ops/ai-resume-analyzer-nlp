@@ -1,13 +1,14 @@
 // middleware/errorMiddleware.js - Global error handling middleware
 const errorMiddleware = (err, req, res, next) => {
   const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+  const responseStatus = err.status || statusCode;
   
-  // Log the error stack for the developer
-  console.error(`[Error] ${req.method} ${req.url}:`, err.stack);
+  // Avoid putting potentially sensitive provider/database details in logs.
+  console.error(`[Error] ${req.method} ${req.url} (${responseStatus}): ${err.name || 'Error'}`);
 
-  res.status(err.status || statusCode).json({
+  res.status(responseStatus).json({
     success: false,
-    message: err.message || 'Internal Server Error',
+    message: responseStatus >= 500 ? 'An unexpected error occurred. Please try again later.' : (err.message || 'Request failed.'),
     // Only show stack trace in development mode
     ...(process.env.NODE_ENV === 'development' && { 
       stack: err.stack,

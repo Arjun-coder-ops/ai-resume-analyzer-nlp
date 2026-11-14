@@ -1,20 +1,20 @@
 // controllers/authController.js - Register & Login logic
 
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { validationResult } = require('express-validator');
 const User = require('../models/User');
 
 // ── Helper: generate JWT token ──────────────────────────────
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
+const generateToken = (user) => {
+  return jwt.sign({ id: user._id, sessionVersion: user.sessionVersion || 0 }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRE || '7d',
   });
 };
 
 // ── Helper: build user response (without password) ─────────
-const userResponse = (user, token) => ({
+const userResponse = (user) => ({
   success: true,
-  token,
   user: {
     id: user._id,
     name: user.name,
@@ -22,6 +22,22 @@ const userResponse = (user, token) => ({
     createdAt: user.createdAt,
   },
 });
+
+const getCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  maxAge: parseInt(process.env.SESSION_COOKIE_MAX_AGE_MS || '', 10) || 7 * 24 * 60 * 60 * 1000,
+  path: '/',
+});
+
+const setSessionCookies = (res, user) => {
+  res.cookie('resumeiq_session', generateToken(user), getCookieOptions());
+  res.cookie('resumeiq_csrf', crypto.randomBytes(32).toString('hex'), {
+    ...getCookieOptions(),
+    httpOnly: false,
+  });
+};
 
 // ──────────────────────────────────────────────────────────────
 // @route   POST /api/auth/register
@@ -57,9 +73,8 @@ const register = async (req, res) => {
     // Create new user (password hashed via pre-save hook)
     const user = await User.create({ name, email, password });
 
-    // Generate token and respond
-    const token = generateToken(user._id);
-    res.status(201).json(userResponse(user, token));
+    setSessionCookies(res, user);
+    res.status(201).json(userResponse(user));
   } catch (error) {
     console.error('Register error:', error);
     res.status(500).json({ success: false, message: 'Server error during registration.' });
@@ -81,7 +96,9 @@ const login = async (req, res) => {
 
   try {
     // Find user and explicitly select password (excluded by default)
-    const user = await User.findOne({ email }).select('+password');
+    // sessionVersion is normally excluded, but it must be included in a newly
+    // issued session token so logout can revoke all earlier sessions.
+    const user = await User.findOne({ email }).select('+password +sessionVersion');
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -98,8 +115,8 @@ const login = async (req, res) => {
       });
     }
 
-    const token = generateToken(user._id);
-    res.json(userResponse(user, token));
+    setSessionCookies(res, user);
+    res.json(userResponse(user));
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ success: false, message: 'Server error during login.' });
@@ -123,4 +140,16 @@ const getMe = async (req, res) => {
   });
 };
 
-module.exports = { register, login, getMe };
+const logout = async (req, res, next) => {
+  try {
+    await User.updateOne({ _id: req.user._id }, { $inc: { sessionVersion: 1 } });
+    const options = getCookieOptions();
+    res.clearCookie('resumeiq_session', options);
+    res.clearCookie('resumeiq_csrf', { ...options, httpOnly: false });
+    res.json({ success: true, message: 'Signed out successfully.' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = { register, login, getMe, logout };

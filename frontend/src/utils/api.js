@@ -2,15 +2,33 @@
 
 import axios from 'axios'
 
+const configuredApiUrl = import.meta.env.VITE_API_URL?.trim()
+const deploymentConfigurationError = !import.meta.env.DEV && !configuredApiUrl
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL: configuredApiUrl || '/api',
   timeout: 60000, // 60s for analysis requests
+  withCredentials: true,
 })
 
-// Attach JWT token to every request
+const readCookie = (name) => document.cookie
+  .split('; ')
+  .find((cookie) => cookie.startsWith(`${name}=`))
+  ?.split('=')[1]
+
+// Cookie-authenticated mutations carry a double-submit CSRF token.
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  if (deploymentConfigurationError) {
+    return Promise.reject(
+      new Error('ResumeIQ is missing VITE_API_URL. Configure the deployed API origin before using the application.')
+    )
+  }
+  const method = (config.method || 'get').toLowerCase()
+  const publicAuthRoute = /\/auth\/(login|register)$/.test(config.url || '')
+  if (!['get', 'head', 'options'].includes(method) && !publicAuthRoute) {
+    const csrfToken = readCookie('resumeiq_csrf')
+    if (csrfToken) config.headers['X-CSRF-Token'] = csrfToken
+  }
   return config
 })
 
@@ -20,7 +38,6 @@ api.interceptors.response.use(
   (error) => {
     // If 401, token expired → redirect to login
     if (error.response?.status === 401) {
-      localStorage.removeItem('token')
       window.location.href = '/login'
     }
     return Promise.reject(error)
@@ -28,3 +45,4 @@ api.interceptors.response.use(
 )
 
 export default api
+export { deploymentConfigurationError }

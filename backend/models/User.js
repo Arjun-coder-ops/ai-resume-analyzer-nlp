@@ -25,6 +25,11 @@ const userSchema = new mongoose.Schema(
       minlength: [6, 'Password must be at least 6 characters'],
       select: false, // Never return password in queries by default
     },
+    sessionVersion: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
   },
   {
     timestamps: true, // Adds createdAt and updatedAt

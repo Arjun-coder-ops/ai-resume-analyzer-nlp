@@ -66,7 +66,6 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
   // 1. Safeguard: Never reprocess or overwrite an already completed analysis
   if (analysis.status === 'completed') {
     console.log(`[Queue Worker] Analysis ${analysisId} is already completed. Skipping reprocessing.`);
-    safeUnlink(resumePath);
     return { success: true, alreadyCompleted: true };
   }
 
@@ -227,7 +226,6 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
         const current = await Analysis.findById(analysisId);
         if (current?.status === 'completed') {
           console.log(`[Queue Worker] Analysis ${analysisId} was already completed concurrently.`);
-          safeUnlink(resumePath);
           return { success: true, alreadyCompleted: true };
         }
         if (current?.attemptToken && current.attemptToken !== attemptToken) {
@@ -244,8 +242,9 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
 
       console.log(`[Queue Worker] Job ${analysisId} completed successfully`);
 
-      // Clean up temporary resume file on successful persistence
-      safeUnlink(resumePath);
+      // The uploaded resume is the persistent document referenced by Analysis.
+      // It must remain available to the authenticated history download route until
+      // the owner deletes the analysis or a retention job removes it.
 
       return { success: true };
     } else {
@@ -342,6 +341,11 @@ let redisConnection = null;
 // Only instantiate BullMQ when not in test environment and REDIS_URL is configured
 const hasRedis = Boolean(process.env.REDIS_URL && process.env.REDIS_URL.trim());
 const isTest = process.env.NODE_ENV === 'test';
+const isProduction = process.env.NODE_ENV === 'production';
+const shouldRunWorker = process.env.RUN_ANALYSIS_WORKER === undefined
+  ? !isProduction
+  : process.env.RUN_ANALYSIS_WORKER === 'true';
+let queueInitializationError = null;
 
 if (!isTest && hasRedis) {
   try {
@@ -358,48 +362,53 @@ if (!isTest && hasRedis) {
 
     analyzeQueue = new Queue('analyzeResume', { connection });
 
-    worker = new Worker(
-      'analyzeResume',
-      async (job) => {
-        const currentAttempt = (job.attemptsMade || 0) + 1;
-        const totalAttempts = job.opts?.attempts || MAX_RETRIES;
-        return await processAnalysisJob(job.data, currentAttempt, totalAttempts);
-      },
-      {
-        connection,
-        concurrency: QUEUE_CONCURRENCY,
-      }
-    );
-
-    worker.on('failed', async (job, err) => {
-      console.error(`[BullMQ Worker] Job ${job?.id} failed:`, err.message);
-      const attemptsMade = (job?.attemptsMade || 0);
-      const maxAttempts = job?.opts?.attempts || MAX_RETRIES;
-
-      if (attemptsMade >= maxAttempts || err.isTerminal || err.name === 'UnrecoverableError') {
-        try {
-          // Atomic update: only mark failed if still non-terminal, never overwrite completed
-          await Analysis.findOneAndUpdate(
-            { _id: job.data?.analysisId, status: { $in: ['processing', 'queued', 'pending'] } },
-            {
-              $set: {
-                status: 'failed',
-                errorMessage: err.message || 'AI processing failed after retrying.',
-              },
-            }
-          );
-        } catch (dbErr) {
-          console.error('[BullMQ Worker] Failed to update terminal failure in DB:', dbErr.message);
+    if (shouldRunWorker) {
+      worker = new Worker(
+        'analyzeResume',
+        async (job) => {
+          const currentAttempt = (job.attemptsMade || 0) + 1;
+          const totalAttempts = job.opts?.attempts || MAX_RETRIES;
+          return await processAnalysisJob(job.data, currentAttempt, totalAttempts);
+        },
+        {
+          connection,
+          concurrency: QUEUE_CONCURRENCY,
         }
+      );
 
-        // Clean up file if still present
-        safeUnlink(job.data?.resumePath);
-      }
-    });
+      worker.on('failed', async (job, err) => {
+        console.error(`[BullMQ Worker] Job ${job?.id} failed:`, err.message);
+        const attemptsMade = (job?.attemptsMade || 0);
+        const maxAttempts = job?.opts?.attempts || MAX_RETRIES;
 
-    console.log('✅ BullMQ Redis queue worker initialized');
+        if (attemptsMade >= maxAttempts || err.isTerminal || err.name === 'UnrecoverableError') {
+          try {
+            // Atomic update: only mark failed if still non-terminal, never overwrite completed
+            await Analysis.findOneAndUpdate(
+              { _id: job.data?.analysisId, status: { $in: ['processing', 'queued', 'pending'] } },
+              {
+                $set: {
+                  status: 'failed',
+                  errorMessage: err.message || 'AI processing failed after retrying.',
+                },
+              }
+            );
+          } catch (dbErr) {
+            console.error('[BullMQ Worker] Failed to update terminal failure in DB:', dbErr.message);
+          }
+
+          // Terminally failed documents are removed; completed ones are retained.
+          safeUnlink(job.data?.resumePath);
+        }
+      });
+
+      console.log('✅ BullMQ Redis queue worker initialized');
+    } else {
+      console.log('✅ BullMQ Redis queue client initialized (worker disabled in API process)');
+    }
   } catch (e) {
-    console.warn('⚠️ BullMQ initialization failed, falling back to in-memory async processing:', e.message);
+    queueInitializationError = e;
+    console.error('❌ BullMQ initialization failed:', e.message);
     analyzeQueue = null;
     worker = null;
   }
@@ -477,8 +486,17 @@ const enqueueAnalysis = async (jobData) => {
         jobId: jobData.analysisId,
       });
     } catch (err) {
-      console.warn('⚠️ Redis enqueue failed, using in-memory async fallback:', err.message);
+      if (isProduction) {
+        throw new Error(`Durable analysis queue is unavailable: ${err.message}`);
+      }
+      console.warn('⚠️ Redis enqueue failed, using development in-memory fallback:', err.message);
     }
+  }
+
+  if (isProduction) {
+    throw new Error(
+      `Durable analysis queue is required in production.${queueInitializationError ? ` ${queueInitializationError.message}` : ''}`
+    );
   }
 
   // Enqueue in memory queue runner with analysisId deduplication against both waiting and active jobs
@@ -493,6 +511,22 @@ const enqueueAnalysis = async (jobData) => {
   }
 
   return { id: jobData.analysisId };
+};
+
+/**
+ * Production readiness guard. Local development and unit tests may use the
+ * explicit in-memory adapter, but production must not accept work without Redis.
+ */
+const ensureQueueReady = async () => {
+  if (isProduction && !analyzeQueue) {
+    throw new Error(
+      `Redis/BullMQ is required in production.${queueInitializationError ? ` ${queueInitializationError.message}` : ''}`
+    );
+  }
+
+  if (isProduction) {
+    await analyzeQueue.waitUntilReady();
+  }
 };
 
 /**
@@ -680,4 +714,5 @@ module.exports = {
   parseRetryAfter,
   safeUnlink,
   setQueueInstancesForTesting,
+  ensureQueueReady,
 };

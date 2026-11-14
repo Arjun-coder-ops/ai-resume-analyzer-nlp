@@ -3,6 +3,23 @@ const path = require('path');
 const mongoose = require('mongoose');
 const Analysis = require('../models/Analysis');
 
+const removeStoredResume = (filename) => {
+  if (!filename) return;
+
+  const uploadDir = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads'));
+  const filePath = path.resolve(uploadDir, path.basename(filename));
+
+  if (!filePath.startsWith(uploadDir + path.sep)) return;
+
+  try {
+    fs.unlinkSync(filePath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.error('Resume cleanup error:', error.message);
+    }
+  }
+};
+
 // ──────────────────────────────────────────────────────────────
 // @route   GET /api/history
 // @desc    Get all completed and failed analyses for the logged-in user
@@ -147,6 +164,8 @@ const deleteAnalysis = async (req, res) => {
     if (!analysis) {
       return res.status(404).json({ success: false, message: 'Analysis not found.' });
     }
+
+    removeStoredResume(analysis.resumeFilename);
 
     res.json({ success: true, message: 'Analysis deleted successfully.' });
   } catch (error) {
