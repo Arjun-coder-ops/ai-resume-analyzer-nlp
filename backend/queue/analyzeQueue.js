@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const FormData = require('form-data');
 const Analysis = require('../models/Analysis');
 const UserDailyQuota = require('../models/UserDailyQuota');
+const { documentStorage } = require('../services/documentStorage');
 
 // Controlled settings
 const QUEUE_CONCURRENCY = parseInt(process.env.QUEUE_CONCURRENCY || '1', 10);
@@ -37,7 +38,36 @@ const parseRetryAfter = (headerValue) => {
  * @param {string} filePath
  */
 const safeUnlink = (filePath) => {
-  if (filePath && fs.existsSync(filePath)) {
+  if (!filePath) return;
+
+  // Legacy payloads carry an absolute temporary path. Always clean that exact
+  // local file first; a same-named persisted key must not mask its cleanup.
+  if (path.isAbsolute(filePath)) {
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (err) {
+        if (err && err.code !== 'ENOENT') {
+          console.error('[Queue Worker] File cleanup error (ignored):', err.message);
+        }
+      }
+    }
+    return;
+  }
+
+  // Queue payloads now carry an opaque key. The legacy path fallback keeps
+  // in-flight jobs and older test payloads compatible during migration.
+  const key = path.basename(filePath);
+  try {
+    if (documentStorage.has(key)) {
+      documentStorage.remove(key);
+      return;
+    }
+  } catch (storageError) {
+    console.error('[Queue Worker] Document storage cleanup error (ignored):', storageError.message);
+  }
+
+  if (fs.existsSync(filePath)) {
     try {
       fs.unlinkSync(filePath);
     } catch (err) {
@@ -53,7 +83,9 @@ const safeUnlink = (filePath) => {
  * and directly updates the database with comprehensive failure and retry safety.
  */
 const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIES) => {
-  const { analysisId, resumePath, resumeOriginalName, jobDescription, webhookUrl } = jobData;
+  const { analysisId, resumePath, resumeKey, resumeOriginalName, jobDescription, webhookUrl } = jobData;
+  const documentKey = resumeKey || path.basename(resumePath || '');
+  const cleanupReference = resumeKey ? documentKey : resumePath;
   console.log(`[Queue Worker] Processing analysis job ${analysisId} (attempt ${attempt}/${maxAttempts})`);
 
   let analysis = await Analysis.findById(analysisId);
@@ -78,13 +110,17 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
 
   if (analysis.status === 'failed' && !isTimeoutFailure) {
     console.log(`[Queue Worker] Analysis ${analysisId} is already marked as failed. Skipping reprocessing.`);
-    safeUnlink(resumePath);
+    safeUnlink(cleanupReference);
     return { success: false, alreadyFailed: true };
   }
 
-  // 3. Safeguard: Verify resume document exists on disk
-  if (!resumePath || !fs.existsSync(resumePath)) {
-    const err = new Error(`Resume file not found at ${resumePath}`);
+  // 3. Safeguard: Resolve the document through the storage boundary. A
+  // provider adapter can later replace local disk without changing queue job
+  // semantics; old jobs with `resumePath` keep working through the fallback.
+  const hasStoredDocument = documentKey && await documentStorage.has(documentKey);
+  const hasLegacyPath = resumePath && fs.existsSync(resumePath);
+  if (!hasStoredDocument && !hasLegacyPath) {
+    const err = new Error(`Resume document not found for key ${documentKey || '<missing>'}`);
     err.isTerminal = true;
     const failDoc = await Analysis.findOneAndUpdate(
       { _id: analysisId, status: { $in: ['processing', 'queued', 'pending'] } },
@@ -130,7 +166,7 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
 
   if (!claimResult) {
     console.log(`[Queue Worker] Analysis ${analysisId} is already terminal or claimed. Skipping processing.`);
-    safeUnlink(resumePath);
+    safeUnlink(cleanupReference);
     return { success: false, alreadyTerminal: true };
   }
 
@@ -155,7 +191,10 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
 
   try {
     const formData = new FormData();
-    formData.append('resume', fs.createReadStream(resumePath), {
+    const resumeStream = hasStoredDocument
+      ? await documentStorage.createReadStream(documentKey)
+      : fs.createReadStream(resumePath);
+    formData.append('resume', resumeStream, {
       filename: resumeOriginalName,
       contentType: 'application/pdf',
     });
@@ -235,7 +274,7 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
         }
         if (current?.status === 'failed') {
           console.warn(`[Queue Worker] Analysis ${analysisId} was already marked failed concurrently. Discarding completion.`);
-          safeUnlink(resumePath);
+          safeUnlink(cleanupReference);
           return { success: false, alreadyFailed: true };
         }
       }
@@ -296,7 +335,7 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
         );
 
         if (failUpdated) {
-          safeUnlink(resumePath);
+          safeUnlink(cleanupReference);
           if (failUpdated.user) {
             await UserDailyQuota.refundFailedAnalysisQuota(failUpdated.user, failUpdated._id, failUpdated.createdAt);
           }
@@ -308,7 +347,7 @@ const processAnalysisJob = async (jobData, attempt = 1, maxAttempts = MAX_RETRIE
       }
 
       // Clean up temporary file only after terminal failure
-      safeUnlink(resumePath);
+      safeUnlink(cleanupReference);
 
       if (isNonRetryableClientError) {
         error.isTerminal = true;

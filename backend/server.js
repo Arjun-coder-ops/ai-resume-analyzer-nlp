@@ -9,6 +9,7 @@ const cookieParser = require('cookie-parser');
 const dotenv = require('dotenv');
 const path = require('path');
 const connectDB = require('./config/db');
+const { assertApiRuntimeConfig } = require('./config/runtime');
 
 // Load environment variables
 dotenv.config();
@@ -67,6 +68,7 @@ const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
   try {
+    assertApiRuntimeConfig();
     await connectDB();
     const { ensureQueueReady } = require('./queue/analyzeQueue');
     await ensureQueueReady();

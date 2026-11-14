@@ -20,3 +20,13 @@
 - The isolated NLP health endpoint had no live Gemini/Groq credentials and ran fallback analysis. This proves safe degradation, not provider-backed output quality.
 - The benchmark discovery emits an informational report with 20/25 expected category matches, Spearman 0.833, and five named fixture discrepancies. The report has no failing threshold assertion; do not represent it as a validated production accuracy metric.
 - Local Compose shares a named upload volume. A production deployment must replace this with durable, private object storage that is available to independently scheduled API and worker instances.
+
+## Milestone 1 verification — 2026-11-14
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Backend regression | PASS | **84/84** tests, including local/S3 storage contracts, runtime configuration, history authorization, queue recovery, and legacy cleanup. |
+| NLP regression | PASS | **47/47** Python 3.11/PyMuPDF tests. |
+| Live API/worker E2E | PASS | Upload, queue completion, MongoDB persistence, authenticated download, CSRF deletion, logout, and revocation. |
+| Production dependency audit | PASS | 0 production vulnerabilities after adding `@aws-sdk/client-s3`. |
+| Frontend production build | PASS | Vite production bundle emitted successfully. |

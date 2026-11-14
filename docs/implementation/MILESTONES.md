@@ -2,8 +2,8 @@
 
 | Milestone | Scope | Status | Exit evidence |
 | --- | --- | --- | --- |
-| 0 | Audit, architecture, risks, baseline, migration plan | IN PROGRESS | Documentation and clean, executable baseline recorded |
-| 1 | Secure SaaS foundation | NOT STARTED | Sessions, tenancy, durable queue, private storage verified |
+| 0 | Audit, architecture, risks, baseline, migration plan | COMPLETE | Verified and pushed as `c5f92bc` |
+| 1 | Secure SaaS foundation | COMPLETE | Private S3-compatible storage, opaque keys, production guards, and 84/84 backend, 47/47 NLP, live E2E verification |
 | 2 | UI/UX transformation | NOT STARTED | Critical public and student screens accessible and tested |
 | 3 | Master career profile | NOT STARTED | Reviewable, versioned profile import/edit/delete |
 | 4 | Resume builder | NOT STARTED | Versioned ATS export workflow |

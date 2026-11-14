@@ -3,7 +3,7 @@
 ## Current position
 
 - **Active branch:** `feat/resumeiq-saas-transformation`
-- **Milestone:** 0 — VERIFIED; commit and branch push are pending final staging review.
+- **Milestone:** 1 — IN PROGRESS. Milestone 0 is verified and pushed as `c5f92bc`.
 - **Baseline revision:** `5fba7d6`
 - **Verification environment:** isolated Docker Compose project `resumeiq-m0-20261114`, using MongoDB 7, Redis 7, Node.js services, and the supplied Python 3.11/PyMuPDF image.
 - **Working-tree safety:** pre-existing tracked and untracked work remains intentionally unstaged. Milestone files must be staged by relevant hunk/file only.

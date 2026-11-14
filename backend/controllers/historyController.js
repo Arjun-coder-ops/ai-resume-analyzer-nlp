@@ -1,24 +1,6 @@
-const fs = require('fs');
-const path = require('path');
 const mongoose = require('mongoose');
 const Analysis = require('../models/Analysis');
-
-const removeStoredResume = (filename) => {
-  if (!filename) return;
-
-  const uploadDir = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads'));
-  const filePath = path.resolve(uploadDir, path.basename(filename));
-
-  if (!filePath.startsWith(uploadDir + path.sep)) return;
-
-  try {
-    fs.unlinkSync(filePath);
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      console.error('Resume cleanup error:', error.message);
-    }
-  }
-};
+const { documentStorage } = require('../services/documentStorage');
 
 // ──────────────────────────────────────────────────────────────
 // @route   GET /api/history
@@ -108,16 +90,7 @@ const downloadResume = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Resume file not found for this analysis.' });
     }
 
-    // Secure path containment check against directory traversal
-    const uploadDir = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads'));
-    const safeFilename = path.basename(analysis.resumeFilename);
-    const resolvedPath = path.resolve(uploadDir, safeFilename);
-
-    if (!resolvedPath.startsWith(uploadDir + path.sep)) {
-      return res.status(403).json({ success: false, message: 'Access denied: invalid file path.' });
-    }
-
-    if (!fs.existsSync(resolvedPath)) {
+    if (!(await documentStorage.has(analysis.resumeFilename))) {
       return res.status(404).json({
         success: false,
         message: 'Resume file is no longer available on disk.',
@@ -131,7 +104,7 @@ const downloadResume = async (req, res) => {
       `inline; filename="${encodeURIComponent(analysis.resumeOriginalName || 'resume.pdf')}"`
     );
 
-    const readStream = fs.createReadStream(resolvedPath);
+    const readStream = await documentStorage.createReadStream(analysis.resumeFilename);
     readStream.on('error', (err) => {
       console.error('[Resume Stream Error]', err.message);
       if (!res.headersSent) {
@@ -165,7 +138,11 @@ const deleteAnalysis = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Analysis not found.' });
     }
 
-    removeStoredResume(analysis.resumeFilename);
+    try {
+      await documentStorage.remove(analysis.resumeFilename);
+    } catch (cleanupError) {
+      console.error('Resume cleanup error:', cleanupError.message);
+    }
 
     res.json({ success: true, message: 'Analysis deleted successfully.' });
   } catch (error) {

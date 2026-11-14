@@ -127,3 +127,10 @@
 - **Verification result:** Live API/worker E2E passed twice through upload, completion, private download, and deletion.
 - **Production note:** Named Compose storage is local integration infrastructure only; Milestone 1 must introduce durable private object storage for multi-node production.
 - **Commit SHA:** Pending recovery commit.
+
+## BUG-016 — Opaque document keys could mask legacy temporary-file cleanup
+
+- **Severity:** High
+- **Root cause:** Queue cleanup preferred a basename key even when a legacy job provided an absolute temporary path with the same filename.
+- **Fix implemented:** Absolute legacy paths are removed directly; only opaque-key jobs use the storage adapter cleanup path.
+- **Verification result:** Queue lifecycle regression passes 28/28 within the 84/84 backend suite.

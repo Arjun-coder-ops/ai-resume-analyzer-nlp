@@ -3,12 +3,12 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { documentStorage } = require('../services/documentStorage');
 
-// Ensure uploads directory exists
-const uploadDir = process.env.UPLOAD_DIR || './uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// The storage adapter owns the trusted local root. Multer only receives that
+// resolved directory; controllers persist the resulting opaque filename.
+documentStorage.ensureReady();
+const uploadDir = documentStorage.stagingDir;
 
 // ── Storage: save to disk with unique filename ──────────────
 const storage = multer.diskStorage({
