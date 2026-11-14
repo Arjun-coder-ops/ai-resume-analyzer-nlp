@@ -113,9 +113,9 @@ export default function AuthPage({ mode = 'login' }) {
   ]
 
   return (
-    <div className="min-h-screen bg-background flex flex-col lg:flex-row">
+    <main className="auth-page">
       {/* ── Left panel: Product positioning & brand (desktop) ── */}
-      <div className="hidden lg:flex flex-col justify-between w-1/2 p-12 lg:p-16 border-r border-border/80 bg-secondary/30">
+      <section className="auth-story">
         {/* Brand header */}
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-[0.375rem] bg-primary text-primary-foreground flex items-center justify-center shadow-cap select-none">
@@ -180,10 +180,10 @@ export default function AuthPage({ mode = 'login' }) {
         <div className="text-xs text-muted-foreground">
           <span>Private and secure resume parsing · No data sold or shared</span>
         </div>
-      </div>
+      </section>
 
       {/* ── Right panel: Authentication form ─────────────── */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 lg:p-16">
+      <section className="auth-panel">
         <div className="w-full max-w-md space-y-6">
           {/* Mobile brand mark */}
           <div className="flex items-center gap-2.5 lg:hidden mb-2">
@@ -376,7 +376,7 @@ export default function AuthPage({ mode = 'login' }) {
             </CardContent>
           </Card>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   )
 }

@@ -9,6 +9,7 @@ export default function ScoreRing({ score = 0, matchLevel = null }) {
   const safeScore = Math.min(100, Math.max(0, Math.round(Number(score) || 0)))
   const [displayScore, setDisplayScore] = useState(0)
   const [animated, setAnimated] = useState(false)
+  const [reduceMotion, setReduceMotion] = useState(false)
 
   // Circle radius and circumference (r = 46)
   const RADIUS = 46
@@ -17,7 +18,20 @@ export default function ScoreRing({ score = 0, matchLevel = null }) {
   const { stroke, label, variant } = getScoreTier(safeScore, matchLevel)
 
   useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setReduceMotion(query.matches)
+    update()
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+
+  useEffect(() => {
     setAnimated(false)
+    if (reduceMotion) {
+      setDisplayScore(safeScore)
+      setAnimated(true)
+      return undefined
+    }
     setDisplayScore(0)
 
     const timer = setTimeout(() => {
@@ -37,7 +51,7 @@ export default function ScoreRing({ score = 0, matchLevel = null }) {
     }, 100)
 
     return () => clearTimeout(timer)
-  }, [safeScore])
+  }, [safeScore, reduceMotion])
 
   return (
     <div
@@ -78,7 +92,7 @@ export default function ScoreRing({ score = 0, matchLevel = null }) {
             strokeDasharray={CIRCUMFERENCE}
             strokeDashoffset={animated ? offset : CIRCUMFERENCE}
             style={{
-              transition: 'stroke-dashoffset 1.2s cubic-bezier(0.165, 0.84, 0.44, 1) 0.1s',
+              transition: reduceMotion ? 'none' : 'stroke-dashoffset 1.2s cubic-bezier(0.165, 0.84, 0.44, 1) 0.1s',
             }}
           />
         </svg>

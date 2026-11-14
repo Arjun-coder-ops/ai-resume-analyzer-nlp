@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
-import Navbar from '../components/Navbar'
+import AppShell from '../components/AppShell'
 import DropZone from '../components/DropZone'
 import ResultsPanel from '../components/ResultsPanel'
 import HistoryCard from '../components/HistoryCard'
@@ -150,6 +150,14 @@ export default function Dashboard() {
       loadHistory()
     }
   }, [activeTab])
+
+  // The shell exposes history as a deep link; keep that navigation meaningful.
+  useEffect(() => {
+    const syncTabWithHash = () => setActiveTab(window.location.hash === '#history' ? 'history' : 'analyze')
+    syncTabWithHash()
+    window.addEventListener('hashchange', syncTabWithHash)
+    return () => window.removeEventListener('hashchange', syncTabWithHash)
+  }, [])
 
   // ── Load Quota from Backend ────────────────────────────────
   const loadQuota = async () => {
@@ -302,10 +310,9 @@ export default function Dashboard() {
   const isQuotaExhausted = quota && quota.trialsRemaining === 0
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar />
+    <AppShell>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+      <main className="workspace-main">
         {/* ── Page Header & Workspace Summary ──────────────── */}
         <div className="mb-8 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -346,30 +353,31 @@ export default function Dashboard() {
           </div>
 
           {/* ── Tab Navigation ─────────────────────────────── */}
-          <div className="flex items-center gap-2 border-b border-border/70 pt-2">
+          <div className="workspace-tabs" role="tablist" aria-label="Resume workspace views">
             <button
               type="button"
-              onClick={() => setActiveTab('analyze')}
-              className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium border-b-2 -mb-px transition-colors duration-150 ${
-                activeTab === 'analyze'
-                  ? 'border-primary text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
+              role="tab"
+              aria-selected={activeTab === 'analyze'}
+              aria-controls="analysis-workspace"
+              id="analysis-tab"
+              onClick={() => { window.history.replaceState(null, '', '/dashboard'); setActiveTab('analyze') }}
+              className={activeTab === 'analyze' ? 'workspace-tab workspace-tab-active' : 'workspace-tab'}
             >
               <FileText size={15} aria-hidden="true" />
               <span>Analyze resume</span>
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === 'history'}
+              aria-controls="history-workspace"
+              id="history-tab"
               onClick={() => {
+                window.history.replaceState(null, '', '/dashboard#history')
                 setActiveTab('history')
                 loadHistory()
               }}
-              className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium border-b-2 -mb-px transition-colors duration-150 ${
-                activeTab === 'history'
-                  ? 'border-primary text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
+              className={activeTab === 'history' ? 'workspace-tab workspace-tab-active' : 'workspace-tab'}
             >
               <History size={15} aria-hidden="true" />
               <span>History</span>
@@ -386,7 +394,7 @@ export default function Dashboard() {
         {/* TAB: ANALYZE RESUME                                  */}
         {/* ════════════════════════════════════════════════════ */}
         {activeTab === 'analyze' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <div id="analysis-workspace" role="tabpanel" aria-labelledby="analysis-tab" className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* ── Left Column: Analysis Form ────────────────── */}
             <div className="lg:col-span-5 space-y-5">
               <Card className="shadow-lift">
@@ -551,7 +559,7 @@ export default function Dashboard() {
         {/* TAB: HISTORY                                         */}
         {/* ════════════════════════════════════════════════════ */}
         {activeTab === 'history' && (
-          <div className="max-w-3xl space-y-4">
+          <div id="history-workspace" role="tabpanel" aria-labelledby="history-tab" className="history-workspace max-w-4xl space-y-4">
             {historyLoading ? (
               <div className="flex items-center justify-center py-24">
                 <Spinner size="lg" />
@@ -602,7 +610,7 @@ export default function Dashboard() {
           </div>
         )}
       </main>
-    </div>
+    </AppShell>
   )
 }
 

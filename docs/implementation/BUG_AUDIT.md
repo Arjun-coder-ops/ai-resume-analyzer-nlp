@@ -134,3 +134,17 @@
 - **Root cause:** Queue cleanup preferred a basename key even when a legacy job provided an absolute temporary path with the same filename.
 - **Fix implemented:** Absolute legacy paths are removed directly; only opaque-key jobs use the storage adapter cleanup path.
 - **Verification result:** Queue lifecycle regression passes 28/28 within the 84/84 backend suite.
+
+## BUG-017 — Public landing route redirected unauthenticated visitors
+
+- **Severity:** High
+- **Root cause:** The global Axios `401` handler redirected every unauthorized response to `/login`, including the expected unauthenticated `/auth/me` session probe issued by the auth provider on the public landing route.
+- **Fix implemented:** The session probe explicitly suppresses auth redirects; protected requests still retain the global redirect behavior.
+- **Verification result:** Browser QA now remains at `/` for unauthenticated visitors and registration/login continue to reach the protected dashboard.
+
+## BUG-018 — M2 application shell removed sign-out access
+
+- **Severity:** High
+- **Root cause:** The legacy navbar carried the logout control and was replaced by the new application shell without moving that control.
+- **Fix implemented:** Added an accessible shell-level sign-out action backed by the existing cookie-authenticated logout API.
+- **Verification result:** Browser QA verified sign-out navigates to `/login`; a subsequent `/dashboard` navigation is rejected by the protected route.

@@ -37,7 +37,7 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     // If 401, token expired → redirect to login
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !error.config?.skipAuthRedirect) {
       window.location.href = '/login'
     }
     return Promise.reject(error)

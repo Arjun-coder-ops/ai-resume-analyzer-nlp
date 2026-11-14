@@ -41,3 +41,13 @@ Replace Compose-local upload sharing with an object-storage abstraction, retain 
 - **Exact next action:** restore the Docker Linux engine, then re-run the complete backend M0/M1 regression command and the full Python/PyMuPDF discovery command above. Only then run the live E2E, audit/build checks, and prepare a separate M1 commit.
 - **Independent checks completed while Docker was unavailable:** frontend production build passed (Vite transformed 1,585 modules); backend `npm audit --omit=dev --json` passed with zero production vulnerabilities after adding the S3 client.
 - **Final recovered-engine verification:** backend **84/84**, queue lifecycle **28/28**, NLP **47/47**, and live API/worker E2E all passed. M2 is the next active milestone after the M1 commit/push.
+
+## M2 working checkpoint (2026-11-14)
+
+- M2 is **complete pending the verified commit and push**. The public landing page, authenticated shell, split-screen authentication, results/history interfaces, and future-module previews are included in the staged M2 set.
+- This session added the results presentation refinements, accessible workspace tabs and score progress bars, a real authenticated private-PDF download action in history, explicit deletion feedback, and protected preview routes for future modules. Preview routes state clearly that no unavailable service is operating.
+- `npm run build` in `frontend/` passed after these changes (Vite, 1,587 modules); frontend and backend production audits both reported zero vulnerabilities.
+- Recovery evidence: Docker Desktop had not been running. It was started normally, without a Compose teardown or volume reset. Elevated host access then showed healthy MongoDB/Redis and running API, worker, NLP services; the full backend suite passed **84/84**, NLP passed **47/47**, and `node test_production.js` passed the real API/worker journey.
+- Browser recovery evidence: a host-launched Vite server at `http://172.28.112.1:5173/` was reachable by the isolated browser. Browser QA verified responsive public layouts, registration/login/logout/protected routes, dashboard shell and preview disclosure. It found and fixed BUG-017 and BUG-018 below. The project owner subsequently completed the normal-host manual browser upload, results, history, download, deletion, and logout pass successfully.
+- **Next milestone:** begin M3 — Master Career Profile. Preserve the established React shell and visual tokens; implement real, versioned profile import/edit/delete workflows rather than prototype behavior.
+- Preserve unrelated pre-existing backend/model/NLP and untracked benchmark changes. If M2 is completed later, stage only reviewed M2 frontend/docs hunks and do not overwrite or absorb those files.
