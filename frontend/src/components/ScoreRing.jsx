@@ -1,121 +1,58 @@
-// components/ScoreRing.jsx - Interior Design System Circular Score Gauge
-
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
+import { useGSAP } from '@gsap/react'
+import gsap from 'gsap'
 import { Badge } from './ui/Badge'
 import { getScoreTier } from '../utils/scoring'
 
-export default function ScoreRing({ score = 0, matchLevel = null }) {
-  // Validate and clamp score safely to 0..100
-  const safeScore = Math.min(100, Math.max(0, Math.round(Number(score) || 0)))
-  const [displayScore, setDisplayScore] = useState(0)
-  const [animated, setAnimated] = useState(false)
-  const [reduceMotion, setReduceMotion] = useState(false)
+const RADIUS = 46
+const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
-  // Circle radius and circumference (r = 46)
-  const RADIUS = 46
-  const CIRCUMFERENCE = 2 * Math.PI * RADIUS
+export default function ScoreRing({ score = 0, matchLevel = null }) {
+  const root = useRef(null)
+  const arc = useRef(null)
+  const [displayScore, setDisplayScore] = useState(0)
+  const safeScore = Math.min(100, Math.max(0, Math.round(Number(score) || 0)))
   const offset = CIRCUMFERENCE - (safeScore / 100) * CIRCUMFERENCE
   const { stroke, label, variant } = getScoreTier(safeScore, matchLevel)
 
-  useEffect(() => {
-    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const update = () => setReduceMotion(query.matches)
-    update()
-    query.addEventListener('change', update)
-    return () => query.removeEventListener('change', update)
-  }, [])
-
-  useEffect(() => {
-    setAnimated(false)
-    if (reduceMotion) {
-      setDisplayScore(safeScore)
-      setAnimated(true)
-      return undefined
+  useGSAP(() => {
+    const media = gsap.matchMedia()
+    const reset = () => {
+      setDisplayScore(0)
+      gsap.set(arc.current, { attr: { strokeDashoffset: CIRCUMFERENCE } })
     }
-    setDisplayScore(0)
 
-    const timer = setTimeout(() => {
-      setAnimated(true)
-      const duration = 1200
-      const startTime = performance.now()
+    media.add('(prefers-reduced-motion: no-preference)', () => {
+      reset()
+      const counter = { value: 0 }
+      const sequence = gsap.timeline({ defaults: { ease: 'power3.out' } })
+      sequence.to(counter, {
+        value: safeScore,
+        duration: 1.05,
+        onUpdate: () => setDisplayScore(Math.round(counter.value)),
+      }, 0).to(arc.current, { attr: { strokeDashoffset: offset }, duration: 1.05 }, 0)
+    })
 
-      const step = (now) => {
-        const elapsed = now - startTime
-        const progress = Math.min(elapsed / duration, 1)
-        // Smooth ease-out cubic
-        const eased = 1 - Math.pow(1 - progress, 3)
-        setDisplayScore(Math.round(eased * safeScore))
-        if (progress < 1) requestAnimationFrame(step)
-      }
-      requestAnimationFrame(step)
-    }, 100)
+    media.add('(prefers-reduced-motion: reduce)', () => {
+      setDisplayScore(safeScore)
+      gsap.set(arc.current, { attr: { strokeDashoffset: offset } })
+    })
 
-    return () => clearTimeout(timer)
-  }, [safeScore, reduceMotion])
+    return () => media.revert()
+  }, { scope: root, dependencies: [safeScore, offset] })
 
   return (
-    <div
-      role="progressbar"
-      aria-valuenow={safeScore}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-label={`Overall resume ATS match score: ${safeScore} out of 100 (${label})`}
-      className="flex flex-col items-center gap-3 select-none"
-    >
-      {/* Circular Gauge */}
-      <div className="relative">
-        <svg
-          width="160"
-          height="160"
-          viewBox="0 0 110 110"
-          className="-rotate-90"
-          aria-hidden="true"
-        >
-          {/* Subtle track background */}
-          <circle
-            cx="55"
-            cy="55"
-            r={RADIUS}
-            fill="none"
-            stroke="oklch(0.9232 0.0026 48.72)"
-            strokeWidth="7"
-          />
-          {/* Animated score arc */}
-          <circle
-            cx="55"
-            cy="55"
-            r={RADIUS}
-            fill="none"
-            stroke={stroke}
-            strokeWidth="7"
-            strokeLinecap="round"
-            strokeDasharray={CIRCUMFERENCE}
-            strokeDashoffset={animated ? offset : CIRCUMFERENCE}
-            style={{
-              transition: reduceMotion ? 'none' : 'stroke-dashoffset 1.2s cubic-bezier(0.165, 0.84, 0.44, 1) 0.1s',
-            }}
-          />
+    <div ref={root} role="progressbar" aria-valuenow={safeScore} aria-valuemin={0} aria-valuemax={100} aria-label={`Overall resume ATS match score: ${safeScore} out of 100 (${label})`} className="score-ring">
+      <div className="score-ring__graphic">
+        <svg width="160" height="160" viewBox="0 0 110 110" className="-rotate-90" aria-hidden="true">
+          <circle cx="55" cy="55" r={RADIUS} fill="none" stroke="var(--border)" strokeWidth="7" />
+          <circle ref={arc} cx="55" cy="55" r={RADIUS} fill="none" stroke={stroke} strokeWidth="7" strokeLinecap="round" strokeDasharray={CIRCUMFERENCE} strokeDashoffset={CIRCUMFERENCE} />
         </svg>
-
-        {/* Numeric score center text */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <span className="font-sans font-bold text-4xl text-foreground leading-none tracking-tight tabular-nums">
-            {displayScore}
-          </span>
-          <span className="text-[10px] font-mono font-medium text-muted-foreground mt-1 tracking-wider uppercase">
-            Out of 100
-          </span>
-        </div>
+        <div className="score-ring__value" aria-hidden="true"><strong>{displayScore}</strong><span>out of 100</span></div>
       </div>
-
-      {/* Semantic Status Badge */}
-      <div className="text-center">
-        <Badge variant={variant} className="text-xs px-2.5 py-0.5 font-medium">
-          {label}
-        </Badge>
-        <p className="text-[11px] text-muted-foreground font-mono mt-1">
-          Compatibility index
-        </p>
+      <div className="score-ring__caption">
+        <Badge variant={variant}>{label}</Badge>
+        <p>Compatibility index</p>
       </div>
     </div>
   )

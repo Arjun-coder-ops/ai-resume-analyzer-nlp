@@ -268,6 +268,12 @@
   .analysis-brief__form { position: sticky; top: 24px; box-shadow: none; }
   .analysis-output { min-width: 0; }
   .analysis-output > .glass-card { min-height: 420px; }
+  .score-ring { display: grid; justify-items: center; gap: 12px; }
+  .score-ring__graphic { position: relative; }
+  .score-ring__value { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; pointer-events: none; }
+  .score-ring__value strong { font-size: 42px; font-weight: 600; letter-spacing: -.07em; line-height: 1; }
+  .score-ring__value span, .score-ring__caption p { margin: 5px 0 0; color: var(--muted-foreground); font: 500 10px/14px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+  .score-ring__caption { text-align: center; }
 }
 
 @media (max-width: 900px) {
