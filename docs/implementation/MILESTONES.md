@@ -4,7 +4,7 @@
 | --- | --- | --- | --- |
 | 0 | Audit, architecture, risks, baseline, migration plan | COMPLETE | Verified and pushed as `c5f92bc` |
 | 1 | Secure SaaS foundation | COMPLETE | Private S3-compatible storage, opaque keys, production guards, and 84/84 backend, 47/47 NLP, live E2E verification |
-| 2 | UI/UX transformation | NOT STARTED | Critical public and student screens accessible and tested |
+| 2 | UI/UX transformation | COMPLETE | Verified public, authentication, workspace, results/history, accessibility, responsive, and preview surfaces; committed and pushed as `615f465` |
 | 3 | Master career profile | NOT STARTED | Reviewable, versioned profile import/edit/delete |
 | 4 | Resume builder | NOT STARTED | Versioned ATS export workflow |
 | 5 | Analysis engine 2.0 | NOT STARTED | Versioned rubric and golden regressions |

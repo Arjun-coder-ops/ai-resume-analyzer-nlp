@@ -6,6 +6,8 @@ import AuthPage   from './pages/AuthPage'
 import Dashboard  from './pages/Dashboard'
 import Spinner    from './components/Spinner'
 import ErrorBoundary from './components/ErrorBoundary'
+import Landing from './pages/Landing'
+import FutureModule from './pages/FutureModule'
 
 // Protected route wrapper
 const ProtectedRoute = ({ children }) => {
@@ -28,7 +30,7 @@ export default function App() {
         <BrowserRouter>
           <div className="noise-overlay" />
           <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<Landing />} />
             <Route path="/login" element={
               <PublicRoute><AuthPage mode="login" /></PublicRoute>
             } />
@@ -37,6 +39,9 @@ export default function App() {
             } />
             <Route path="/dashboard" element={
               <ProtectedRoute><Dashboard /></ProtectedRoute>
+            } />
+            <Route path="/workspace/:module" element={
+              <ProtectedRoute><FutureModule /></ProtectedRoute>
             } />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

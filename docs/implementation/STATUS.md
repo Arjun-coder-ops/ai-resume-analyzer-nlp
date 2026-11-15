@@ -3,10 +3,18 @@
 ## Current position
 
 - **Active branch:** `feat/resumeiq-saas-transformation`
-- **Milestone:** 1 — IN PROGRESS. Milestone 0 is verified and pushed as `c5f92bc`.
+- **Milestone:** 2 — COMPLETE and pushed as `615f465`. Milestone 3 — Master Career Profile is next.
 - **Baseline revision:** `5fba7d6`
 - **Verification environment:** isolated Docker Compose project `resumeiq-m0-20261114`, using MongoDB 7, Redis 7, Node.js services, and the supplied Python 3.11/PyMuPDF image.
 - **Working-tree safety:** pre-existing tracked and untracked work remains intentionally unstaged. Milestone files must be staged by relevant hunk/file only.
+
+## M2 current evidence and remaining verification
+
+- The frontend has a public landing page, responsive authenticated shell, redesigned authentication, results and history interactions, and protected preview layouts for later modules.
+- Frontend production build passed after the current M2 frontend changes.
+- Docker Desktop was safely restarted without changing volumes. The isolated services are healthy; an elevated host run passed backend **84/84**, NLP **47/47**, and the live API/worker E2E.
+- Host-served browser QA verified landing desktop/tablet/mobile layouts, registration, login, logout, protected-route enforcement, shell navigation, and future-module preview disclosure. It found and fixed a public-route redirect and missing sign-out control.
+- The browser automation file-selection boundary prevented submitting the workspace PDF through the browser UI, but the requested normal-host manual browser pass has now been confirmed by the project owner: upload, polling, result/history rendering, private download, deletion confirmation, and logout all succeeded. The same workflow also passed through the live E2E client.
 
 ## Milestone 0 acceptance evidence
 

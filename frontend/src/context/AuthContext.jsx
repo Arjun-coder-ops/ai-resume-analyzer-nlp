@@ -13,7 +13,9 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const validateToken = async () => {
       try {
-        const { data } = await api.get('/auth/me')
+        // A missing session is expected on public routes; it must not redirect
+        // visitors away from the landing page while the provider initializes.
+        const { data } = await api.get('/auth/me', { skipAuthRedirect: true })
         setUser(data.user)
       } catch {
         setUser(null)

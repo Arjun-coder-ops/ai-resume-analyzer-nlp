@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
-import Navbar from '../components/Navbar'
+import AppShell from '../components/AppShell'
 import DropZone from '../components/DropZone'
 import ResultsPanel from '../components/ResultsPanel'
 import HistoryCard from '../components/HistoryCard'
@@ -150,6 +150,14 @@ export default function Dashboard() {
       loadHistory()
     }
   }, [activeTab])
+
+  // The shell exposes history as a deep link; keep that navigation meaningful.
+  useEffect(() => {
+    const syncTabWithHash = () => setActiveTab(window.location.hash === '#history' ? 'history' : 'analyze')
+    syncTabWithHash()
+    window.addEventListener('hashchange', syncTabWithHash)
+    return () => window.removeEventListener('hashchange', syncTabWithHash)
+  }, [])
 
   // ── Load Quota from Backend ────────────────────────────────
   const loadQuota = async () => {
@@ -302,33 +310,26 @@ export default function Dashboard() {
   const isQuotaExhausted = quota && quota.trialsRemaining === 0
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar />
+    <AppShell>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+      <main className="workspace-main workbench-dashboard">
         {/* ── Page Header & Workspace Summary ──────────────── */}
-        <div className="mb-8 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="dashboard-heading">
+          <div className="dashboard-heading__intro">
             <div>
-              <p className="text-xs font-mono font-medium text-muted-foreground mb-1 uppercase tracking-wider">
-                Dashboard
-              </p>
-              <h1 className="font-sans text-2xl sm:text-3xl font-semibold text-foreground tracking-tight">
-                Hey, {user?.name ? user.name.split(' ')[0] : 'there'}
-              </h1>
-              <p className="text-muted-foreground text-sm mt-1 leading-normal">
-                Evaluate your resume against target job requirements to detect skills gaps and optimize ATS compatibility.
-              </p>
+              <p className="dashboard-heading__eyebrow">Analysis workspace</p>
+              <h1>What will your resume meet?</h1>
+              <p>Bring a resume and a target role together. The completed analysis keeps the score, evidence, and recommendations in one place.</p>
             </div>
 
             {/* Quota Indicator */}
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-btn bg-card border border-border/80 shadow-row text-xs">
+            <div className="dashboard-quota">
+              <div className="dashboard-quota__readout">
                 <span className="text-muted-foreground">Daily quota:</span>
                 {quotaLoading ? (
                   <span className="font-mono text-muted-foreground">Checking…</span>
                 ) : quota ? (
-                  <span className={`font-mono font-medium ${isQuotaExhausted ? 'text-destructive font-semibold' : 'text-foreground'}`}>
+                  <span className={isQuotaExhausted ? 'text-destructive font-semibold' : 'text-foreground'}>
                     {quota.trialsRemaining} of {quota.dailyLimit} remaining
                   </span>
                 ) : (
@@ -346,30 +347,31 @@ export default function Dashboard() {
           </div>
 
           {/* ── Tab Navigation ─────────────────────────────── */}
-          <div className="flex items-center gap-2 border-b border-border/70 pt-2">
+          <div className="workspace-tabs dashboard-tabs" role="tablist" aria-label="Resume workspace views">
             <button
               type="button"
-              onClick={() => setActiveTab('analyze')}
-              className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium border-b-2 -mb-px transition-colors duration-150 ${
-                activeTab === 'analyze'
-                  ? 'border-primary text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
+              role="tab"
+              aria-selected={activeTab === 'analyze'}
+              aria-controls="analysis-workspace"
+              id="analysis-tab"
+              onClick={() => { window.history.replaceState(null, '', '/dashboard'); setActiveTab('analyze') }}
+              className={activeTab === 'analyze' ? 'workspace-tab workspace-tab-active' : 'workspace-tab'}
             >
               <FileText size={15} aria-hidden="true" />
               <span>Analyze resume</span>
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === 'history'}
+              aria-controls="history-workspace"
+              id="history-tab"
               onClick={() => {
+                window.history.replaceState(null, '', '/dashboard#history')
                 setActiveTab('history')
                 loadHistory()
               }}
-              className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium border-b-2 -mb-px transition-colors duration-150 ${
-                activeTab === 'history'
-                  ? 'border-primary text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
+              className={activeTab === 'history' ? 'workspace-tab workspace-tab-active' : 'workspace-tab'}
             >
               <History size={15} aria-hidden="true" />
               <span>History</span>
@@ -386,12 +388,12 @@ export default function Dashboard() {
         {/* TAB: ANALYZE RESUME                                  */}
         {/* ════════════════════════════════════════════════════ */}
         {activeTab === 'analyze' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <div id="analysis-workspace" role="tabpanel" aria-labelledby="analysis-tab" className="analysis-layout">
             {/* ── Left Column: Analysis Form ────────────────── */}
-            <div className="lg:col-span-5 space-y-5">
-              <Card className="shadow-lift">
+            <div className="analysis-brief">
+              <Card className="analysis-brief__form">
                 <CardHeader>
-                  <CardTitle>Evaluation setup</CardTitle>
+                  <CardTitle>Set the comparison</CardTitle>
                   <CardDescription>
                     Provide your resume document and the target role description.
                   </CardDescription>
@@ -516,7 +518,7 @@ export default function Dashboard() {
             </div>
 
             {/* ── Right Column: Results & Progress ──────────── */}
-            <div className="lg:col-span-7" id="results">
+            <div className="analysis-output" id="results">
               {analyzing && <AnalyzingProgress />}
 
               {!analyzing && !result && !error && <EmptyWorkspaceState />}
@@ -551,7 +553,7 @@ export default function Dashboard() {
         {/* TAB: HISTORY                                         */}
         {/* ════════════════════════════════════════════════════ */}
         {activeTab === 'history' && (
-          <div className="max-w-3xl space-y-4">
+          <div id="history-workspace" role="tabpanel" aria-labelledby="history-tab" className="history-workspace max-w-4xl space-y-4">
             {historyLoading ? (
               <div className="flex items-center justify-center py-24">
                 <Spinner size="lg" />
@@ -602,7 +604,7 @@ export default function Dashboard() {
           </div>
         )}
       </main>
-    </div>
+    </AppShell>
   )
 }
 

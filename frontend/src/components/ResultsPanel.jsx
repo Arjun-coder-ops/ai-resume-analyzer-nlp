@@ -76,6 +76,40 @@ export default function ResultsPanel({ data = {} }) {
         w.type === 'in_progress_degree_for_completed_role'
     )
 
+  const qualificationStatus =
+    data.qualificationStatus ||
+    eduEvidence.qualification_status ||
+    (hasMandatoryGap ? 'not_found' : 'not_applicable')
+
+  const getQualificationBadge = (status) => {
+    switch (status) {
+      case 'documented_match':
+        return {
+          label: 'Mandatory Qualifications: Documented Match',
+          variant: 'default',
+          className: 'bg-emerald-600/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30'
+        }
+      case 'not_found':
+        return {
+          label: 'Mandatory Qualification: Not Found in Document',
+          variant: 'destructive',
+          className: 'bg-destructive/15 text-destructive border-destructive/40'
+        }
+      case 'uncertain':
+        return {
+          label: 'Mandatory Qualification: In-Progress / Uncertain',
+          variant: 'secondary',
+          className: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30'
+        }
+      default:
+        return {
+          label: 'Mandatory Qualifications: Not Stated in JD',
+          variant: 'outline',
+          className: 'text-muted-foreground border-border'
+        }
+    }
+  }
+
   const matchedSkills = Array.isArray(data.matchedSkills) ? data.matchedSkills : []
   const missingSkills = Array.isArray(data.missingSkills) ? data.missingSkills : []
   const extractedSkills = Array.isArray(data.extractedSkills) ? data.extractedSkills : []
@@ -213,11 +247,11 @@ export default function ResultsPanel({ data = {} }) {
     : []
 
   return (
-    <div className="space-y-6 animate-scale-in">
+    <section className="results-panel space-y-6 animate-scale-in" aria-label="Resume analysis results">
       {/* ══════════════════════════════════════════════════════ */}
       {/* 1. AUDIT HEADER & DOCUMENT CONTEXT                     */}
       {/* ══════════════════════════════════════════════════════ */}
-      <Card className="shadow-lift border border-border/90">
+      <Card className="results-hero shadow-lift border border-border/90">
         <CardHeader className="pb-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div>
@@ -324,7 +358,7 @@ export default function ResultsPanel({ data = {} }) {
       {/* ══════════════════════════════════════════════════════ */}
       {/* 2. OVERALL ATS SCORECARD & 5-PILLAR BREAKDOWN          */}
       {/* ══════════════════════════════════════════════════════ */}
-      <Card className="shadow-lift">
+      <Card className="results-scorecard shadow-lift">
         <CardHeader>
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
@@ -333,8 +367,17 @@ export default function ResultsPanel({ data = {} }) {
                 Weighted evaluation across key screening criteria used by applicant tracking systems.
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2">
-              {hasMandatoryGap && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {qualificationStatus !== 'not_applicable' && (
+                <Badge
+                  variant={getQualificationBadge(qualificationStatus).variant}
+                  className={`font-mono text-[11px] gap-1 ${getQualificationBadge(qualificationStatus).className}`}
+                >
+                  <ShieldCheck size={12} aria-hidden="true" />
+                  <span>{getQualificationBadge(qualificationStatus).label}</span>
+                </Badge>
+              )}
+              {hasMandatoryGap && qualificationStatus === 'not_applicable' && (
                 <Badge variant="destructive" className="gap-1 animate-pulse font-mono text-[11px]">
                   <TriangleAlert size={12} aria-hidden="true" />
                   <span>Mandatory Gap Detected</span>
@@ -395,8 +438,11 @@ export default function ResultsPanel({ data = {} }) {
 
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
             {/* Score Ring Gauge inside Recessed Well */}
-            <div className="md:col-span-5 flex flex-col items-center justify-center p-6 rounded-card bg-secondary/50 border border-border shadow-well">
+            <div className="md:col-span-5 flex flex-col items-center justify-center p-6 rounded-card bg-secondary/50 border border-border shadow-well text-center space-y-2">
               <ScoreRing score={score} matchLevel={matchLevel} />
+              <p className="text-[11px] text-muted-foreground font-mono leading-tight max-w-[220px]">
+                Continuous role-match alignment score. Distinct from mandatory qualification eligibility.
+              </p>
             </div>
 
             {/* 5-Pillar Breakdown Bars */}
@@ -406,7 +452,7 @@ export default function ResultsPanel({ data = {} }) {
                 return (
                   <div
                     key={pillar.key}
-                    className="p-3 rounded-badge bg-secondary/40 border border-border/70 space-y-1.5"
+                    className="score-pillar p-3 rounded-badge bg-secondary/40 border border-border/70 space-y-1.5"
                   >
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-medium text-foreground flex items-center gap-1.5">
@@ -428,6 +474,11 @@ export default function ResultsPanel({ data = {} }) {
                       <div
                         className={`h-full rounded-cell transition-all duration-700 ${pillar.barColor}`}
                         style={{ width: `${pct}%` }}
+                        role="progressbar"
+                        aria-label={`${pillar.name} score`}
+                        aria-valuemin="0"
+                        aria-valuemax={pillar.max}
+                        aria-valuenow={pillar.score}
                       />
                     </div>
                     {pillar.explanation && (
@@ -475,7 +526,7 @@ export default function ResultsPanel({ data = {} }) {
       {/* ══════════════════════════════════════════════════════ */}
       {/* 3. SKILLS MATRIX: MATCHED VS. MISSING                  */}
       {/* ══════════════════════════════════════════════════════ */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <section className="skills-matrix grid grid-cols-1 md:grid-cols-2 gap-6" aria-label="Skills alignment">
         {/* Matched Skills */}
         <Card className="shadow-lift">
           <CardHeader className="pb-3">
@@ -547,7 +598,7 @@ export default function ResultsPanel({ data = {} }) {
             )}
           </CardContent>
         </Card>
-      </div>
+      </section>
 
       {/* All Extracted Skills Catalog */}
       {extractedSkills.length > 0 && (
@@ -581,7 +632,7 @@ export default function ResultsPanel({ data = {} }) {
       {/* ══════════════════════════════════════════════════════ */}
       {/* 4. ACTIONABLE OPTIMIZATION RECOMMENDATIONS            */}
       {/* ══════════════════════════════════════════════════════ */}
-      <Card className="shadow-lift">
+      <Card className="recommendations-card shadow-lift">
         <CardHeader>
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
@@ -594,7 +645,7 @@ export default function ResultsPanel({ data = {} }) {
           </div>
 
           {/* Filter tabs */}
-          <div className="flex items-center gap-1.5 pt-3 overflow-x-auto pb-1 text-xs">
+          <div className="recommendation-tabs flex items-center gap-1.5 pt-3 overflow-x-auto pb-1 text-xs" role="tablist" aria-label="Recommendation categories">
             {[
               { id: 'all', label: 'All recommendations' },
               { id: 'keywords', label: 'Keyword placement' },
@@ -606,6 +657,9 @@ export default function ResultsPanel({ data = {} }) {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveRecTab(tab.id)}
+                role="tab"
+                aria-selected={activeRecTab === tab.id}
+                aria-controls="recommendation-list"
                 className={`px-3 py-1.5 rounded-badge text-xs font-medium transition-colors whitespace-nowrap ${
                   activeRecTab === tab.id
                     ? 'bg-primary text-primary-foreground shadow-cap'
@@ -618,7 +672,7 @@ export default function ResultsPanel({ data = {} }) {
           </div>
         </CardHeader>
 
-        <CardContent className="space-y-3">
+        <CardContent id="recommendation-list" role="tabpanel" className="space-y-3">
           {/* Keyword Recommendations */}
           {(activeRecTab === 'all' || activeRecTab === 'keywords') &&
             recKeywords.map((tip, i) => (
@@ -984,14 +1038,14 @@ export default function ResultsPanel({ data = {} }) {
           )}
         </div>
       )}
-    </div>
+    </section>
   )
 }
 
 // ── Compact Metric Tile ───────────────────────────────────────
 function MetricTile({ label, value, sub, badge, highlight }) {
   return (
-    <div className="p-3.5 rounded-badge bg-secondary/40 border border-border/70 flex flex-col justify-between">
+    <div className="metric-tile p-3.5 rounded-badge bg-secondary/40 border border-border/70 flex flex-col justify-between">
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs text-muted-foreground font-medium">{label}</span>
         <Badge variant={highlight ? 'warning' : 'secondary'} className="text-[10px] py-0 px-1.5 font-mono">
@@ -1009,13 +1063,13 @@ function MetricTile({ label, value, sub, badge, highlight }) {
 // ── Recommendation Item Card ──────────────────────────────────
 function RecommendationCard({ category, content }) {
   return (
-    <div className="p-3.5 rounded-badge bg-secondary/40 border border-border/70 space-y-1">
+    <article className="recommendation-item p-3.5 rounded-badge bg-secondary/40 border border-border/70 space-y-1">
       <div className="flex items-center justify-between">
         <Badge variant="secondary" className="text-[10px] font-mono">
           {category}
         </Badge>
       </div>
       <p className="text-xs text-foreground leading-relaxed pt-0.5">{content}</p>
-    </div>
+    </article>
   )
 }
