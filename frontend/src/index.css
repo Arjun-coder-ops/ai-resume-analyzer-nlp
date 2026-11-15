@@ -203,6 +203,36 @@
   .auth-story .text-muted-foreground { color: #63706a; }
   .auth-panel { display: grid; place-items: center; padding: 40px; }
   .auth-panel .glass-card { width: min(100%, 440px); box-shadow: none; }
+
+  /* Authentication is an arrival sequence, not a copy of the marketing layout. */
+  .auth-rebuild { display: grid; min-height: 100vh; grid-template-columns: minmax(260px,.75fr) minmax(0,1.25fr); background: var(--background); }
+  .auth-rebuild__aside { display: flex; flex-direction: column; justify-content: space-between; padding: 28px; background: var(--primary); color: var(--primary-foreground); }
+  .auth-rebuild__brand { display: inline-flex; align-items: center; gap: 9px; color: inherit; font-size: 16px; font-weight: 650; letter-spacing: -.04em; text-decoration: none; }
+  .auth-rebuild__mark { display: grid; width: 29px; height: 29px; place-items: center; border: 1px solid currentColor; border-radius: 50%; font: 600 10px/1 var(--font-mono); }
+  .auth-rebuild__aside-copy { max-width: 250px; }
+  .auth-rebuild__aside-copy p:first-child { margin: 0; color: #bfcfc7; font: 500 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .auth-rebuild__aside-copy h2 { margin: 16px 0 0; font-size: clamp(30px,4vw,48px); font-weight: 600; letter-spacing: -.065em; line-height: .98; text-wrap: balance; }
+  .auth-rebuild__aside-copy p:last-child { margin: 20px 0 0; color: #c6d6ce; font-size: 14px; line-height: 20px; }
+  .auth-rebuild__aside-note { margin: 0; color: #bfcfc7; font-size: 12px; line-height: 18px; }
+  .auth-rebuild__main { display: grid; place-items: center; padding: 48px 24px; }
+  .auth-rebuild__form { width: min(100%, 430px); }
+  .auth-rebuild__back { display: inline-flex; margin-bottom: 56px; color: var(--muted-foreground); font-size: 13px; text-decoration: none; text-underline-offset: 4px; }
+  .auth-rebuild__eyebrow { margin: 0; color: var(--muted-foreground); font: 500 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .auth-rebuild__form h1 { margin: 12px 0 0; font-size: clamp(36px,4vw,48px); font-weight: 600; letter-spacing: -.06em; line-height: 1; }
+  .auth-rebuild__intro { margin: 14px 0 32px; color: var(--muted-foreground); font-size: 14px; line-height: 20px; }
+  .auth-rebuild__intro a { color: var(--foreground); font-weight: 600; text-underline-offset: 4px; }
+  .auth-rebuild__error { display: flex; gap: 10px; margin-bottom: 20px; padding: 12px; border-left: 3px solid var(--destructive); background: #f8e8e4; color: #87311f; font-size: 14px; line-height: 20px; }
+  .auth-rebuild__fields { display: grid; gap: 18px; }
+  .auth-rebuild__field { display: grid; gap: 7px; }
+  .auth-rebuild__label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .auth-rebuild__field label, .auth-rebuild__label-row label { font-size: 14px; font-weight: 600; }
+  .auth-rebuild__hint { color: var(--muted-foreground); font: 500 11px/16px var(--font-mono); }
+  .auth-rebuild__password { position: relative; }
+  .auth-rebuild__password .input-field { padding-right: 42px; }
+  .auth-rebuild__password button { position: absolute; top: 50%; right: 10px; display: grid; width: 28px; height: 28px; place-items: center; transform: translateY(-50%); border: 0; border-radius: var(--radius-badge); background: transparent; color: var(--muted-foreground); }
+  .auth-rebuild__password button:hover { color: var(--foreground); background: var(--secondary); }
+  .auth-rebuild__submit { width: 100%; margin-top: 8px; }
+  .auth-rebuild__terms { margin: 18px 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 18px; }
 }
 
 @media (max-width: 900px) {
@@ -214,6 +244,9 @@
   .mobile-menu { display: inline-flex; }
   .auth-page { grid-template-columns: 1fr; }
   .auth-story { display: none; }
+  .auth-rebuild { grid-template-columns: 1fr; }
+  .auth-rebuild__aside { min-height: auto; padding: 22px 20px; }
+  .auth-rebuild__aside-copy, .auth-rebuild__aside-note { display: none; }
 }
 
 @media (max-width: 680px) {
@@ -247,6 +280,8 @@
   .history-card-open { display: none; }
   .history-card-actions { justify-content: flex-start; }
   .auth-panel { padding: 24px 16px; }
+  .auth-rebuild__main { padding: 32px 20px; align-items: start; }
+  .auth-rebuild__back { margin-bottom: 64px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
