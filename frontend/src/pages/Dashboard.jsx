@@ -312,30 +312,24 @@ export default function Dashboard() {
   return (
     <AppShell>
 
-      <main className="workspace-main">
+      <main className="workspace-main workbench-dashboard">
         {/* ── Page Header & Workspace Summary ──────────────── */}
-        <div className="mb-8 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="dashboard-heading">
+          <div className="dashboard-heading__intro">
             <div>
-              <p className="text-xs font-mono font-medium text-muted-foreground mb-1 uppercase tracking-wider">
-                Dashboard
-              </p>
-              <h1 className="font-sans text-2xl sm:text-3xl font-semibold text-foreground tracking-tight">
-                Hey, {user?.name ? user.name.split(' ')[0] : 'there'}
-              </h1>
-              <p className="text-muted-foreground text-sm mt-1 leading-normal">
-                Evaluate your resume against target job requirements to detect skills gaps and optimize ATS compatibility.
-              </p>
+              <p className="dashboard-heading__eyebrow">Analysis workspace</p>
+              <h1>What will your resume meet?</h1>
+              <p>Bring a resume and a target role together. The completed analysis keeps the score, evidence, and recommendations in one place.</p>
             </div>
 
             {/* Quota Indicator */}
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-btn bg-card border border-border/80 shadow-row text-xs">
+            <div className="dashboard-quota">
+              <div className="dashboard-quota__readout">
                 <span className="text-muted-foreground">Daily quota:</span>
                 {quotaLoading ? (
                   <span className="font-mono text-muted-foreground">Checking…</span>
                 ) : quota ? (
-                  <span className={`font-mono font-medium ${isQuotaExhausted ? 'text-destructive font-semibold' : 'text-foreground'}`}>
+                  <span className={isQuotaExhausted ? 'text-destructive font-semibold' : 'text-foreground'}>
                     {quota.trialsRemaining} of {quota.dailyLimit} remaining
                   </span>
                 ) : (
@@ -353,7 +347,7 @@ export default function Dashboard() {
           </div>
 
           {/* ── Tab Navigation ─────────────────────────────── */}
-          <div className="workspace-tabs" role="tablist" aria-label="Resume workspace views">
+          <div className="workspace-tabs dashboard-tabs" role="tablist" aria-label="Resume workspace views">
             <button
               type="button"
               role="tab"
@@ -394,12 +388,12 @@ export default function Dashboard() {
         {/* TAB: ANALYZE RESUME                                  */}
         {/* ════════════════════════════════════════════════════ */}
         {activeTab === 'analyze' && (
-          <div id="analysis-workspace" role="tabpanel" aria-labelledby="analysis-tab" className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <div id="analysis-workspace" role="tabpanel" aria-labelledby="analysis-tab" className="analysis-layout">
             {/* ── Left Column: Analysis Form ────────────────── */}
-            <div className="lg:col-span-5 space-y-5">
-              <Card className="shadow-lift">
+            <div className="analysis-brief">
+              <Card className="analysis-brief__form">
                 <CardHeader>
-                  <CardTitle>Evaluation setup</CardTitle>
+                  <CardTitle>Set the comparison</CardTitle>
                   <CardDescription>
                     Provide your resume document and the target role description.
                   </CardDescription>
@@ -524,7 +518,7 @@ export default function Dashboard() {
             </div>
 
             {/* ── Right Column: Results & Progress ──────────── */}
-            <div className="lg:col-span-7" id="results">
+            <div className="analysis-output" id="results">
               {analyzing && <AnalyzingProgress />}
 
               {!analyzing && !result && !error && <EmptyWorkspaceState />}

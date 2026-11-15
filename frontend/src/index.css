@@ -253,6 +253,21 @@
   .workbench-link small { margin-left: auto; color: var(--muted-foreground); font: 500 10px/14px var(--font-mono); }
   .workbench-rail__note { margin: auto 8px 0; color: var(--muted-foreground); font-size: 12px; line-height: 18px; }
   .workbench-canvas { min-width: 0; }
+  .workbench-dashboard { max-width: 1360px; }
+  .dashboard-heading { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 32px; align-items: end; padding-bottom: 32px; border-bottom: 1px solid var(--foreground); }
+  .dashboard-heading__intro { max-width: 680px; }
+  .dashboard-heading__eyebrow { margin: 0 0 12px; color: var(--muted-foreground); font: 500 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .dashboard-heading h1 { margin: 0; font-size: clamp(36px,5vw,60px); font-weight: 600; letter-spacing: -.065em; line-height: .96; }
+  .dashboard-heading__intro > div > p:last-child { max-width: 580px; margin: 16px 0 0; color: var(--muted-foreground); font-size: 15px; line-height: 22px; }
+  .dashboard-quota { display: flex; align-items: center; gap: 12px; }
+  .dashboard-quota__readout { display: grid; gap: 3px; min-width: 128px; padding: 10px 12px; border-left: 2px solid #d95a37; background: var(--card); font-size: 12px; }
+  .dashboard-quota__readout span:last-child { font: 600 13px/18px var(--font-mono); }
+  .dashboard-tabs { margin: 20px 0 38px; }
+  .analysis-layout { display: grid; grid-template-columns: minmax(340px,.8fr) minmax(0,1.2fr); gap: 48px; align-items: start; }
+  .analysis-brief { display: grid; gap: 18px; }
+  .analysis-brief__form { position: sticky; top: 24px; box-shadow: none; }
+  .analysis-output { min-width: 0; }
+  .analysis-output > .glass-card { min-height: 420px; }
 }
 
 @media (max-width: 900px) {
@@ -275,6 +290,9 @@
   .workbench-rail { position: fixed; z-index: 50; top: 64px; bottom: 0; width: 264px; transform: translateX(-110%); box-shadow: var(--shadow-float-dropdown); transition: transform .5s cubic-bezier(.22,1,.36,1); }
   .workbench-rail--open { transform: translateX(0); }
   .workbench-canvas { grid-column: 1; }
+  .dashboard-heading, .analysis-layout { grid-template-columns: 1fr; }
+  .dashboard-heading { align-items: start; }
+  .analysis-brief__form { position: static; }
 }
 
 @media (max-width: 680px) {
