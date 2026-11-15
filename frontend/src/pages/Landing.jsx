@@ -1,172 +1,48 @@
+import { lazy, Suspense, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { useRef } from 'react'
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
+import BrandMark from '../components/BrandMark'
 
+const HeroScene = lazy(() => import('../components/HeroScene'))
 gsap.registerPlugin(useGSAP, ScrollTrigger)
 
-const revealWords = 'A useful career decision starts with evidence you can inspect.'.split(' ')
-
-const steps = [
-  ['01', 'Bring the source material', 'Upload the resume you already use and add the role description you want to understand.'],
-  ['02', 'Read the relationship', 'ResumeIQ compares requirements with the skills and experience represented in your own document.'],
-  ['03', 'Choose your next edit', 'Review the score, evidence, and recommendations before you change a line of your resume.'],
-]
-
-const faqs = [
-  ['What does ResumeIQ analyze?', 'It analyzes the resume document and job description you submit, then presents the resulting compatibility information in your private workspace.'],
-  ['Is my resume private?', 'Your documents are accessible only through your authenticated account. Downloads and deletion are protected by the same account controls.'],
-  ['Can I use a PDF resume?', 'Yes. The analysis workspace accepts PDF resumes and shows file validation guidance before submission.'],
-  ['Will ResumeIQ rewrite my resume for me?', 'The current product helps you inspect compatibility and recommendations. Future editing tools are clearly marked as planned until they are available.'],
-  ['What happens after I submit an analysis?', 'The workspace keeps you informed while the analysis is processing, then shows the completed score and detailed findings when they are ready.'],
-  ['Can I remove an analysis?', 'Yes. Each saved analysis has a protected deletion control in your history.'],
+const story = [
+  ['01', 'Read the document', 'ResumeIQ extracts the experience, skills, and language your own resume contains.'],
+  ['02', 'Frame the role', 'A target description gives those signals a purpose and makes gaps legible.'],
+  ['03', 'Make the next edit', 'Review compatibility, evidence, and recommendations before changing your resume.'],
 ]
 
 export default function Landing() {
   const root = useRef(null)
-
   useGSAP(() => {
     const media = gsap.matchMedia()
-
     media.add('(prefers-reduced-motion: no-preference)', () => {
-      const intro = gsap.timeline({ defaults: { ease: 'power3.out' } })
-      intro
-        .from('[data-hero-kicker]', { opacity: 0, y: 16, duration: .45 })
-        .from('[data-hero-title]', { opacity: 0, y: 30, duration: .72 }, '-=.18')
-        .from('[data-hero-copy], [data-hero-action]', { opacity: 0, y: 18, duration: .5, stagger: .1 }, '-=.35')
-        .from('[data-theater]', { opacity: 0, y: 28, duration: .72 }, '-=.18')
-
-      gsap.to('[data-tagline-word]', {
-        color: '#1c2824',
-        stagger: .09,
-        duration: .42,
-        ease: 'power2.out',
-        scrollTrigger: {
-          trigger: '[data-tagline]',
-          start: 'top 72%',
-          once: true,
-        },
-      })
-
-      gsap.utils.toArray('[data-reveal]').forEach((section) => {
-        gsap.from(section, {
-          opacity: 0,
-          y: 28,
-          duration: .7,
-          ease: 'power3.out',
-          scrollTrigger: { trigger: section, start: 'top 82%', once: true },
-        })
+      gsap.timeline({ defaults: { ease: 'power4.out' } })
+        .from('[data-brand]', { opacity: 0, scale: .8, duration: .55 })
+        .from('[data-hero-line]', { yPercent: 110, stagger: .11, duration: .85 }, '-=.2')
+        .from('[data-hero-copy], [data-hero-cta]', { opacity: 0, y: 20, stagger: .1, duration: .5 }, '-=.4')
+      gsap.utils.toArray('[data-story]').forEach((section, index) => {
+        gsap.from(section.querySelectorAll('[data-story-part]'), { x: index % 2 ? 44 : -44, opacity: 0, stagger: .14, duration: .75, ease: 'power3.out', scrollTrigger: { trigger: section, start: 'top 72%', once: true } })
       })
     })
-
     return () => media.revert()
   }, { scope: root })
 
-  return (
-    <main className="rebuild-site" ref={root}>
-      <a className="skip-link" href="#main-content">Skip to content</a>
-      <nav className="rebuild-nav" aria-label="Public navigation">
-        <Link className="rebuild-brand" to="/">
-          <span className="rebuild-brand-mark" aria-hidden="true">IQ</span>
-          <span>ResumeIQ</span>
-        </Link>
-        <div className="rebuild-nav-actions">
-          <Link to="/login">Sign in</Link>
-          <Link className="rebuild-button" to="/register">Create account</Link>
-        </div>
-      </nav>
-
-      <div id="main-content">
-        <section className="rebuild-hero" aria-labelledby="hero-title">
-          <p className="rebuild-kicker" data-hero-kicker>Resume intelligence for real applications</p>
-          <h1 id="hero-title" data-hero-title>See what your resume is already saying.</h1>
-          <p className="rebuild-hero-copy" data-hero-copy>
-            ResumeIQ reads your resume alongside a target role and gives you an evidence based view of the match, the gaps, and the next edit worth making.
-          </p>
-          <div className="rebuild-hero-actions" data-hero-action>
-            <Link className="rebuild-button" to="/register">Analyze a resume</Link>
-            <Link className="rebuild-button rebuild-button--quiet" to="/login">Open workspace</Link>
-          </div>
-          <p className="rebuild-proof" data-hero-action>Private account access. PDF resume upload. No invented outcomes.</p>
-        </section>
-
-        <section className="evidence-theater" data-theater aria-label="Illustrative resume to role comparison">
-          <div className="evidence-theater__topline">
-            <span>Illustrative product preview</span>
-            <span>Evidence review</span>
-          </div>
-          <div className="evidence-theater__body">
-            <article className="evidence-source">
-              <p className="rebuild-kicker">Your resume</p>
-              <h2>Product designer</h2>
-              <p>Signals present in the document are surfaced as evidence, not assumptions.</p>
-              <ul className="evidence-list">
-                <li><span>Research synthesis</span><small>evidence found</small></li>
-                <li><span>Design systems</span><small>evidence found</small></li>
-                <li><span>Product delivery</span><small>evidence found</small></li>
-              </ul>
-            </article>
-            <div className="evidence-spine" aria-hidden="true"><span>compare</span><i>↔</i></div>
-            <article className="evidence-source evidence-source--role">
-              <p className="rebuild-kicker">Target role</p>
-              <h2>Senior product designer</h2>
-              <p>The role description gives context to each match and each missing requirement.</p>
-              <ul className="evidence-list">
-                <li><span>User research</span><small>aligned</small></li>
-                <li><span>Design systems</span><small>aligned</small></li>
-                <li><span>Experiment strategy</span><em>review needed</em></li>
-              </ul>
-            </article>
-          </div>
-        </section>
-
-        <section className="rebuild-statement" data-tagline aria-label="ResumeIQ benefit">
-          <p>{revealWords.map((word, index) => <span data-tagline-word key={`${word}-${index}`}>{word}{' '}</span>)}</p>
-        </section>
-
-        <section className="rebuild-section" data-reveal aria-labelledby="flow-heading">
-          <div className="rebuild-section-heading">
-            <p>How it works</p>
-            <h2 id="flow-heading">The analysis stays connected to the document and the role you chose.</h2>
-          </div>
-          <div className="rebuild-steps">
-            {steps.map(([number, title, copy]) => (
-              <article className="rebuild-step" key={number}>
-                <span className="rebuild-step__number">{number}</span>
-                <h3>{title}</h3>
-                <p>{copy}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="rebuild-section" data-reveal aria-labelledby="questions-heading">
-          <div className="rebuild-section-heading">
-            <p>Questions</p>
-            <h2 id="questions-heading">A clear place to begin.</h2>
-          </div>
-          <div className="rebuild-faq">
-            {faqs.map(([question, answer]) => (
-              <details key={question}>
-                <summary>{question}</summary>
-                <p>{answer}</p>
-              </details>
-            ))}
-          </div>
-        </section>
-
-        <section className="rebuild-closing" data-reveal aria-labelledby="closing-heading">
-          <h2 id="closing-heading">Bring the resume. Bring the role. Leave with a clearer next step.</h2>
-          <p>Create an account to keep your analyses, access your private documents, and return to the evidence whenever you need it.</p>
-          <Link className="rebuild-button" to="/register">Create your account</Link>
-        </section>
-      </div>
-
-      <footer className="rebuild-footer">
-        <span>ResumeIQ</span>
-        <span>Career intelligence grounded in your own documents.</span>
-      </footer>
-    </main>
-  )
+  return <main className="cinema-site" ref={root}>
+    <a className="skip-link" href="#cinema-content">Skip to content</a>
+    <nav className="cinema-nav" aria-label="Public navigation"><Link to="/" data-brand><BrandMark /></Link><div><Link to="/login">Sign in</Link><Link className="cinema-nav__cta" to="/register">Create account</Link></div></nav>
+    <div id="cinema-content">
+      <section className="cinema-hero" aria-labelledby="cinema-title">
+        <div className="cinema-hero__copy"><p className="cinema-label">Resume intelligence, grounded in evidence</p><h1 id="cinema-title"><span data-hero-line>Make your</span><span data-hero-line>experience</span><span data-hero-line>move with you.</span></h1><p data-hero-copy>ResumeIQ compares your own resume with the opportunity in front of you, so the next revision starts with a clearer signal.</p><div data-hero-cta><Link className="cinema-button" to="/register">Analyze a resume <span aria-hidden="true">↗</span></Link><small>Private account access. PDF resume upload.</small></div></div>
+        <div className="cinema-hero__scene"><Suspense fallback={<div className="hero-scene hero-scene--fallback"><span>Resume ↔ role</span></div>}><HeroScene /></Suspense><p>Illustrative 3D product moment</p></div>
+      </section>
+      <section className="cinema-manifesto" data-story><p data-story-part>Careers are not a keyword game.</p><p data-story-part>They are a body of work, understood in context.</p></section>
+      <section className="cinema-story" aria-label="How ResumeIQ works">{story.map(([number, title, copy]) => <article data-story key={number}><span data-story-part>{number}</span><div data-story-part><h2>{title}</h2><p>{copy}</p></div><i data-story-part aria-hidden="true" /></article>)}</section>
+      <section className="cinema-preview" data-story><div data-story-part><p className="cinema-label">Inside the workspace</p><h2>A real analysis, made usable.</h2><p>Completed analyses keep the compatibility score, qualification context, skills, recommendations, history, and private document actions together.</p><Link className="cinema-button cinema-button--light" to="/login">Open workspace</Link></div><div className="cinema-preview__screen" data-story-part><header><BrandMark compact /><span>Illustrative preview</span></header><div><p>Compatibility</p><strong>Evidence first</strong><ul><li>Matched skills</li><li>Role requirements</li><li>Recommendations</li></ul></div></div></section>
+      <section className="cinema-close" data-story><p className="cinema-label" data-story-part>Make the decision visible</p><h2 data-story-part>Bring your resume and the role you want next.</h2><Link className="cinema-button cinema-button--coral" data-story-part to="/register">Create your account</Link></section>
+    </div>
+    <footer className="cinema-footer"><BrandMark /><p>Career intelligence that stays connected to your own document.</p><nav aria-label="Footer navigation"><Link to="/login">Sign in</Link><Link to="/register">Create account</Link><Link to="/dashboard">Workspace</Link></nav><small>© 2026 ResumeIQ</small></footer>
+  </main>
 }
