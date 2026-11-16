@@ -2,11 +2,11 @@
 
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
-import AuthPage   from './pages/AuthPage'
+import AuthPage   from './pages/AuthV2'
 import Dashboard  from './pages/Dashboard'
 import Spinner    from './components/Spinner'
 import ErrorBoundary from './components/ErrorBoundary'
-import Landing from './pages/Landing'
+import Landing from './pages/LandingV2'
 import FutureModule from './pages/FutureModule'
 
 // Protected route wrapper
