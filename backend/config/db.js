@@ -19,8 +19,12 @@ const connectDB = async () => {
     // Safely sync unique partial indexes and create quota indexes without dropping unrelated production indexes
     const { syncAnalysisIndexes } = require('../models/Analysis');
     const UserDailyQuota = require('../models/UserDailyQuota');
+    const Institution = require('../models/Institution');
+    const InstitutionMembership = require('../models/InstitutionMembership');
+    const AuditLog = require('../models/AuditLog');
     await syncAnalysisIndexes();
     await UserDailyQuota.createIndexes();
+    await Promise.all([Institution.createIndexes(), InstitutionMembership.createIndexes(), AuditLog.createIndexes()]);
   } catch (error) {
     console.error(`❌ MongoDB connection error: ${error.message}`);
     throw error;

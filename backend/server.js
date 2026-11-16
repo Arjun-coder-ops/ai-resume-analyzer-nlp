@@ -43,6 +43,7 @@ const { errorMiddleware, notFound } = require('./middleware/errorMiddleware');
 
 // ── Routes ──────────────────────────────────────────────────
 app.use('/api/auth',    require('./routes/authRoutes'));
+app.use('/api/institutions', require('./routes/institutionRoutes'));
 app.use('/api/analyze', require('./routes/analyzeRoutes'));
 app.use('/api/history', require('./routes/historyRoutes'));
 

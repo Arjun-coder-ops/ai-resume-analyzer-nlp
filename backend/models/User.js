@@ -30,6 +30,14 @@ const userSchema = new mongoose.Schema(
       default: 0,
       select: false,
     },
+    // Platform administrators are provisioned out-of-band. University staff
+    // roles are held in InstitutionMembership and must never be supplied at
+    // registration time.
+    platformRole: {
+      type: String,
+      enum: ['student', 'platform_admin'],
+      default: 'student',
+    },
   },
   {
     timestamps: true, // Adds createdAt and updatedAt
